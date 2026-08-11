@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lexiflow"
+version = "0.1.0"
+description = "Real-time, fully local speech-to-insight engine: ring-buffered capture, native Whisper inference, rule-first NLP analytics and a live dashboard."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Abdus Sami" }]
+keywords = [
+    "speech-to-text",
+    "whisper",
+    "real-time",
+    "offline",
+    "nlp",
+    "sentiment-analysis",
+    "streamlit",
+    "audio",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.22"]
+
+[project.optional-dependencies]
+audio = ["sounddevice>=0.4.6"]
+asr = ["pywhispercpp>=1.2.0"]
+nlp = ["spacy>=3.7", "vaderSentiment>=3.3.2"]
+ui = ["streamlit>=1.31"]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+all = [
+    "sounddevice>=0.4.6",
+    "pywhispercpp>=1.2.0",
+    "spacy>=3.7",
+    "vaderSentiment>=3.3.2",
+    "streamlit>=1.31",
+]
+
+[project.urls]
+Homepage = "https://github.com/Abdus-Sami01/LexiFlow"
+Issues = "https://github.com/Abdus-Sami01/LexiFlow/issues"
+
+[project.scripts]
+lexiflow = "lexiflow.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lexiflow*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
