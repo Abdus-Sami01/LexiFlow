@@ -24,6 +24,7 @@ class SpeechSegment:
     index: int
     peak_rms: float = 0.0
     reason: str = "silence"
+    is_final: bool = True
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -54,6 +55,7 @@ class SpeechSegmenter:
         self._segment_index = 0
         self._segment_started_at = 0.0
         self._segment_peak = 0.0
+        self._last_partial_seconds = 0.0
 
     @property
     def frame_size(self) -> int:
@@ -129,7 +131,31 @@ class SpeechSegmenter:
             if self._buffered_seconds() >= self.config.min_segment_seconds:
                 return self._emit("silence")
             self._discard_segment()
-        return None
+            return None
+
+        return self._maybe_partial()
+
+    def _maybe_partial(self) -> Optional[SpeechSegment]:
+        """Snapshot the in-flight utterance so the UI can show it before the pause."""
+        if not self.config.emit_partials:
+            return None
+        buffered = self._buffered_seconds()
+        if buffered < self.config.partial_min_seconds:
+            return None
+        if buffered - self._last_partial_seconds < self.config.partial_interval_seconds:
+            return None
+        self._last_partial_seconds = buffered
+        return SpeechSegment(
+            audio=np.concatenate(self._pending),
+            sample_rate=self.sample_rate,
+            started_at=self._segment_started_at or time.time(),
+            ended_at=time.time(),
+            index=self._segment_index,
+            peak_rms=self._segment_peak,
+            reason="partial",
+            is_final=False,
+            metadata={"noise_floor": self._noise_floor},
+        )
 
     def _open_segment(self) -> None:
         self._in_speech = True
@@ -169,3 +195,4 @@ class SpeechSegmenter:
         self._speech_frames = 0
         self._silence_frames = 0
         self._segment_peak = 0.0
+        self._last_partial_seconds = 0.0

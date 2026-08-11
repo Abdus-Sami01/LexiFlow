@@ -46,6 +46,20 @@ class SegmenterConfig:
     noise_floor_alpha: float = 0.965
     speech_trigger_ratio: float = 3.2
     absolute_silence_rms: float = 1.5e-3
+    emit_partials: bool = True
+    partial_interval_seconds: float = 2.0
+    partial_min_seconds: float = 1.0
+
+
+@dataclass
+class DiarizationConfig:
+    """Speaker attribution by online MFCC clustering; no pretrained model."""
+
+    enabled: bool = True
+    similarity_threshold: float = 0.72
+    max_speakers: int = 8
+    min_seconds: float = 0.6
+    adaptation_rate: float = 0.25
 
 
 @dataclass
@@ -78,8 +92,13 @@ class NLPConfig:
     enable_spacy: bool = True
     enable_sentiment: bool = True
     enable_rules: bool = True
+    enable_topics: bool = True
     sentiment_window: int = 12
     max_queue_size: int = 256
+    topic_window: int = 6
+    topic_threshold: float = 0.12
+    summary_sentences: int = 5
+    keyphrase_limit: int = 12
 
 
 @dataclass
@@ -99,6 +118,7 @@ class LexiFlowConfig:
 
     audio: AudioConfig = field(default_factory=AudioConfig)
     segmenter: SegmenterConfig = field(default_factory=SegmenterConfig)
+    diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
     asr: ASRConfig = field(default_factory=ASRConfig)
     nlp: NLPConfig = field(default_factory=NLPConfig)
     state: StateConfig = field(default_factory=StateConfig)
@@ -116,6 +136,7 @@ class LexiFlowConfig:
         sections = {
             "audio": AudioConfig,
             "segmenter": SegmenterConfig,
+            "diarization": DiarizationConfig,
             "asr": ASRConfig,
             "nlp": NLPConfig,
             "state": StateConfig,

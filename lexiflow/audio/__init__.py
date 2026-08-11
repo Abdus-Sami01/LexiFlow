@@ -19,6 +19,13 @@ from .conversion import (
 )
 from .ring_buffer import AudioRingBuffer, RingBufferOverflow, RingBufferStats
 from .segmenter import SpeechSegment, SpeechSegmenter
+from .speaker import (
+    SpeakerAssignment,
+    SpeakerProfile,
+    SpeakerTracker,
+    mfcc,
+    voice_embedding,
+)
 
 __all__ = [
     "AudioBackendUnavailable",
@@ -28,15 +35,20 @@ __all__ = [
     "RingBufferOverflow",
     "RingBufferStats",
     "SegmentProducer",
+    "SpeakerAssignment",
+    "SpeakerProfile",
+    "SpeakerTracker",
     "SpeechSegment",
     "SpeechSegmenter",
     "WHISPER_SAMPLE_RATE",
     "dbfs",
     "list_input_devices",
+    "mfcc",
     "peak",
     "prepare_for_whisper",
     "resample_linear",
     "rms",
     "to_float32",
     "to_mono",
+    "voice_embedding",
 ]

@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS transcript (
     audio_seconds REAL,
     inference_seconds REAL,
     compound REAL,
-    label TEXT
+    label TEXT,
+    speaker TEXT
 );
 CREATE INDEX IF NOT EXISTS transcript_session_idx ON transcript(session_id, seq);
 CREATE TABLE IF NOT EXISTS action_items (
@@ -57,11 +58,20 @@ CREATE TABLE IF NOT EXISTS entities (
     seen_at REAL
 );
 CREATE INDEX IF NOT EXISTS entities_session_idx ON entities(session_id, kind);
+CREATE TABLE IF NOT EXISTS topics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    at_index INTEGER,
+    similarity REAL,
+    previous_keywords TEXT,
+    current_keywords TEXT,
+    seen_at REAL
+);
 """
 
 FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts
-USING fts5(text, session_id UNINDEXED, seq UNINDEXED, content='');
+USING fts5(text, session_id UNINDEXED, seq UNINDEXED);
 """
 
 
@@ -76,6 +86,8 @@ class TranscriptItem:
     inference_seconds: float = 0.0
     compound: float = 0.0
     label: str = "neutral"
+    speaker: Optional[str] = None
+    speaker_confidence: float = 0.0
     entities: List[Dict[str, Any]] = field(default_factory=list)
     extractions: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -90,6 +102,8 @@ class TranscriptItem:
             "inference_seconds": self.inference_seconds,
             "compound": self.compound,
             "label": self.label,
+            "speaker": self.speaker,
+            "speaker_confidence": self.speaker_confidence,
             "entities": list(self.entities),
             "extractions": list(self.extractions),
         }
@@ -138,6 +152,9 @@ class SessionStore:
             maxlen=self.config.max_events
         )
         self._metrics: Dict[str, Any] = {}
+        self._topics: List[Dict[str, Any]] = []
+        self._speakers: Dict[str, Dict[str, float]] = {}
+        self._partial: Optional[Dict[str, Any]] = None
         self._listeners: List[Callable[[str, Any], None]] = []
         self._sequence = 0
         self._local = threading.local()
@@ -211,12 +228,22 @@ class SessionStore:
                 inference_seconds=float(kwargs.get("inference_seconds", 0.0)),
                 compound=float(sentiment.compound) if sentiment else 0.0,
                 label=sentiment.label if sentiment else "neutral",
+                speaker=kwargs.get("speaker"),
+                speaker_confidence=float(kwargs.get("speaker_confidence", 0.0)),
                 entities=[entity.as_dict() for entity in (insight.entities if insight else [])],
                 extractions=[
                     extraction.as_dict() for extraction in (insight.extractions if insight else [])
                 ],
             )
             self._transcript.append(item)
+            self._partial = None
+            if item.speaker:
+                bucket = self._speakers.setdefault(
+                    item.speaker, {"lines": 0, "seconds": 0.0, "compound": 0.0}
+                )
+                bucket["lines"] += 1
+                bucket["seconds"] += item.audio_seconds
+                bucket["compound"] += item.compound
             self._sentiment_timeline.append(
                 {
                     "seq": item.seq,
@@ -226,6 +253,9 @@ class SessionStore:
                     "momentum": float(insight.sentiment_momentum) if insight else 0.0,
                 }
             )
+
+            if insight is not None and insight.topic_shift is not None:
+                self._topics.append(insight.topic_shift.as_dict())
 
             if insight is not None:
                 for extraction in insight.extractions:
@@ -254,8 +284,8 @@ class SessionStore:
             with connection:
                 connection.execute(
                     "INSERT INTO transcript(session_id, seq, text, started_at, ended_at, backend,"
-                    " audio_seconds, inference_seconds, compound, label)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    " audio_seconds, inference_seconds, compound, label, speaker)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         self.session_id,
                         item.seq,
@@ -267,6 +297,7 @@ class SessionStore:
                         item.inference_seconds,
                         item.compound,
                         item.label,
+                        item.speaker,
                     ),
                 )
                 if self._fts_enabled:
@@ -274,6 +305,21 @@ class SessionStore:
                         "INSERT INTO transcript_fts(text, session_id, seq) VALUES (?,?,?)",
                         (item.text, self.session_id, item.seq),
                     )
+                if insight is not None and insight.topic_shift is not None:
+                    shift = insight.topic_shift
+                    connection.execute(
+                        "INSERT INTO topics(session_id, at_index, similarity, previous_keywords,"
+                        " current_keywords, seen_at) VALUES (?,?,?,?,?,?)",
+                        (
+                            self.session_id,
+                            shift.at_index,
+                            shift.similarity,
+                            ", ".join(shift.previous_keywords),
+                            ", ".join(shift.current_keywords),
+                            time.time(),
+                        ),
+                    )
+
                 if insight is not None:
                     connection.executemany(
                         "INSERT OR REPLACE INTO action_items"
@@ -329,6 +375,41 @@ class SessionStore:
         self._emit("action", snapshot)
         return snapshot
 
+    def set_partial(self, text: str, speaker: Optional[str] = None) -> None:
+        """Hold the in-flight hypothesis separately so it never pollutes the transcript."""
+        with self._lock:
+            self._partial = {"text": text, "speaker": speaker, "at": time.time()}
+        self._emit("partial", self._partial)
+
+    def clear_partial(self) -> None:
+        with self._lock:
+            self._partial = None
+
+    def partial(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return dict(self._partial) if self._partial else None
+
+    def topics(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            return [dict(item) for item in self._topics]
+
+    def speakers(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = [
+                {
+                    "label": label,
+                    "lines": int(values["lines"]),
+                    "seconds": round(values["seconds"], 2),
+                    "average_sentiment": round(values["compound"] / max(1, values["lines"]), 4),
+                }
+                for label, values in self._speakers.items()
+            ]
+        rows.sort(key=lambda row: -row["seconds"])
+        total = sum(row["seconds"] for row in rows) or 1.0
+        for row in rows:
+            row["share"] = round(row["seconds"] / total, 4)
+        return rows
+
     def transcript(self, limit: Optional[int] = None) -> List[TranscriptItem]:
         with self._lock:
             items = list(self._transcript)
@@ -368,6 +449,8 @@ class SessionStore:
                     "utterances": len(self._transcript),
                     "open_actions": sum(1 for item in self._actions.values() if not item.done),
                     "total_actions": len(self._actions),
+                    "speakers": len(self._speakers),
+                    "topic_shifts": len(self._topics),
                 }
             )
         return payload
@@ -400,6 +483,74 @@ class SessionStore:
             ]
         return matches[-limit:][::-1]
 
+    def search_all_sessions(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search every session ever recorded, newest hits first."""
+        needle = (query or "").strip()
+        if not needle or not self.config.persist:
+            return []
+        connection = self._connection()
+        try:
+            if self._fts_enabled:
+                rows = connection.execute(
+                    "SELECT f.seq, f.text, f.session_id, s.name FROM transcript_fts f"
+                    " LEFT JOIN sessions s ON s.id = f.session_id"
+                    " WHERE transcript_fts MATCH ? ORDER BY f.rowid DESC LIMIT ?",
+                    (self._as_match_query(needle), limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT t.seq, t.text, t.session_id, s.name FROM transcript t"
+                    " LEFT JOIN sessions s ON s.id = t.session_id"
+                    " WHERE t.text LIKE ? ORDER BY t.id DESC LIMIT ?",
+                    (f"%{needle}%", limit),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            {
+                "seq": row["seq"],
+                "text": row["text"],
+                "session_id": row["session_id"],
+                "session_name": row["name"],
+            }
+            for row in rows
+        ]
+
+    def latest_session_with_transcript(self, exclude_current: bool = True) -> Optional[str]:
+        """Most recent session that actually holds transcript rows."""
+        if not self.config.persist:
+            return None
+        try:
+            row = self._connection().execute(
+                "SELECT s.id FROM sessions s JOIN transcript t ON t.session_id = s.id"
+                " WHERE s.id != ? OR ? = 0"
+                " GROUP BY s.id ORDER BY s.started_at DESC LIMIT 1",
+                (self.session_id, 1 if exclude_current else 0),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        return row["id"] if row else None
+
+    def load_session(self, session_id: str, limit: int = 1_000) -> List[Dict[str, Any]]:
+        """Read a previous session's transcript back out of SQLite."""
+        if not self.config.persist:
+            return []
+        try:
+            rows = self._connection().execute(
+                "SELECT seq, text, started_at, ended_at, compound, label, speaker"
+                " FROM transcript WHERE session_id = ? ORDER BY seq LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [dict(row) for row in rows]
+
+    def digest(self, analytics, limit: Optional[int] = None):
+        """Build a shareable digest from whatever has been transcribed so far."""
+        items = self.transcript(limit)
+        audio_seconds = sum(item.audio_seconds for item in items)
+        return analytics.digest([item.text for item in items], audio_seconds)
+
     @staticmethod
     def _as_match_query(query: str) -> str:
         tokens = [token for token in query.replace('"', " ").split() if token]
@@ -417,6 +568,8 @@ class SessionStore:
             "actions": [item.as_dict() for item in self.actions()],
             "entities": self.entity_counts(),
             "sentiment": self.sentiment_timeline(),
+            "speakers": self.speakers(),
+            "topics": self.topics(),
         }
 
     def export_json(self, path: Optional[Path] = None, indent: int = 2) -> str:

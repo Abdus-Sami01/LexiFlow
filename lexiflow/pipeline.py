@@ -30,6 +30,9 @@ class PipelineHealth:
     utterances_out: int
     asr_realtime_factor: float
     analytics_average_ms: float
+    partials_out: int
+    dropped_partials: int
+    speakers: int
     errors: List[str]
 
 
@@ -45,7 +48,9 @@ class LexiFlowPipeline:
         self.config = config or LexiFlowConfig()
         self.store = store or SessionStore(self.config.state)
         self.analytics = AnalyticsEngine(self.config.nlp)
-        self.transcription = TranscriptionEngine(self.config.asr, backend)
+        self.transcription = TranscriptionEngine(
+            self.config.asr, backend, self.config.diarization
+        )
         self.stream = MicrophoneStream(self.config.audio, on_level=self._on_level)
 
         self._segment_queue: "queue.Queue[Optional[SpeechSegment]]" = queue.Queue(
@@ -155,6 +160,11 @@ class LexiFlowPipeline:
             utterances_out=self.transcription.stats.utterances_out,
             asr_realtime_factor=round(self.transcription.stats.realtime_factor, 3),
             analytics_average_ms=round(self.analytics.stats.average_ms, 3),
+            partials_out=self.transcription.stats.partials_out,
+            dropped_partials=self._producer.dropped_partials if self._producer else 0,
+            speakers=self.transcription.speakers.speaker_count
+            if self.transcription.speakers
+            else 0,
             errors=errors,
         )
 
@@ -169,7 +179,14 @@ class LexiFlowPipeline:
             "actions": [item.as_dict() for item in self.store.actions()],
             "entities": self.store.entity_counts(),
             "sentiment": self.store.sentiment_timeline(),
+            "speakers": self.store.speakers(),
+            "topics": self.store.topics(),
+            "partial": self.store.partial(),
         }
+
+    def digest(self, limit: Optional[int] = None):
+        """Extractive summary, keyphrases and topic shifts for the session so far."""
+        return self.store.digest(self.analytics, limit)
 
     def subscribe(self, listener: Callable[[str, Any], None]) -> Callable[[], None]:
         return self.store.subscribe(listener)

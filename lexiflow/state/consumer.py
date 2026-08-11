@@ -39,6 +39,9 @@ class AnalyticsConsumer(threading.Thread):
             self.error = exc
 
     def _handle(self, utterance: Utterance) -> None:
+        if not utterance.is_final:
+            self.store.set_partial(utterance.text, utterance.speaker)
+            return
         try:
             insight = self.engine.analyse(utterance.text)
         except Exception:
@@ -51,6 +54,8 @@ class AnalyticsConsumer(threading.Thread):
             backend=utterance.backend,
             audio_seconds=utterance.audio_seconds,
             inference_seconds=utterance.inference_seconds,
+            speaker=utterance.speaker,
+            speaker_confidence=utterance.speaker_confidence,
         )
         self.store.update_metrics(
             asr_realtime_factor=round(utterance.realtime_factor, 3),

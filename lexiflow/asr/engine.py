@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..audio.segmenter import SpeechSegment
-from ..config import ASRConfig
+from ..audio.speaker import SpeakerTracker
+from ..config import ASRConfig, DiarizationConfig
 from .backends import TranscriptionResult, WhisperBackend, create_backend
 
 
@@ -25,6 +26,9 @@ class Utterance:
     inference_seconds: float
     backend: str
     language: str = "en"
+    is_final: bool = True
+    speaker: Optional[str] = None
+    speaker_confidence: float = 0.0
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -38,6 +42,7 @@ class Utterance:
 class EngineStats:
     segments_in: int = 0
     utterances_out: int = 0
+    partials_out: int = 0
     empty_results: int = 0
     errors: int = 0
     audio_seconds: float = 0.0
@@ -54,10 +59,24 @@ class TranscriptionEngine:
     """Thin, reusable wrapper so the backend can be swapped at runtime."""
 
     def __init__(
-        self, config: Optional[ASRConfig] = None, backend: Optional[WhisperBackend] = None
+        self,
+        config: Optional[ASRConfig] = None,
+        backend: Optional[WhisperBackend] = None,
+        diarization: Optional[DiarizationConfig] = None,
     ) -> None:
         self.config = config or ASRConfig()
         self.backend = backend or create_backend(self.config)
+        self.diarization = diarization or DiarizationConfig()
+        self.speakers = (
+            SpeakerTracker(
+                similarity_threshold=self.diarization.similarity_threshold,
+                max_speakers=self.diarization.max_speakers,
+                min_seconds=self.diarization.min_seconds,
+                adaptation_rate=self.diarization.adaptation_rate,
+            )
+            if self.diarization.enabled
+            else None
+        )
         self.stats = EngineStats()
         self._lock = threading.Lock()
 
@@ -70,7 +89,8 @@ class TranscriptionEngine:
 
     def transcribe_segment(self, segment: SpeechSegment) -> Optional[Utterance]:
         self.ensure_loaded()
-        self.stats.segments_in += 1
+        if segment.is_final:
+            self.stats.segments_in += 1
         started = time.perf_counter()
         with self._lock:
             result: TranscriptionResult = self.backend.transcribe(
@@ -85,7 +105,12 @@ class TranscriptionEngine:
             self.stats.empty_results += 1
             return None
 
-        self.stats.utterances_out += 1
+        if segment.is_final:
+            self.stats.utterances_out += 1
+        else:
+            self.stats.partials_out += 1
+
+        speaker, confidence = self._attribute(segment)
         return Utterance(
             text=text,
             started_at=segment.started_at,
@@ -95,8 +120,21 @@ class TranscriptionEngine:
             inference_seconds=result.inference_seconds or wall_clock,
             backend=result.backend,
             language=result.language,
+            is_final=segment.is_final,
+            speaker=speaker,
+            speaker_confidence=confidence,
             metadata={"segment_reason": segment.reason, "peak_rms": segment.peak_rms},
         )
+
+    def _attribute(self, segment: SpeechSegment) -> tuple[Optional[str], float]:
+        if self.speakers is None or not segment.is_final:
+            return None, 0.0
+        assignment = self.speakers.assign(
+            segment.audio, segment.sample_rate, timestamp=segment.started_at
+        )
+        if assignment is None:
+            return None, 0.0
+        return assignment.label, assignment.confidence
 
 
 class TranscriptionConsumer(threading.Thread):

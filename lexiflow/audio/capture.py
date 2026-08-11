@@ -210,6 +210,7 @@ class SegmentProducer(threading.Thread):
         self.stream = stream
         self.output = output
         self.segmenter_config = segmenter_config
+        self.dropped_partials = 0
         self.error: Optional[BaseException] = None
         self._stop_event = threading.Event()
 
@@ -218,7 +219,16 @@ class SegmentProducer(threading.Thread):
             for segment in self.stream.segments(self.segmenter_config):
                 if self._stop_event.is_set():
                     break
-                self.output.put(segment)
+                if segment.is_final:
+                    self.output.put(segment)
+                    continue
+                try:
+                    if self.output.qsize() == 0:
+                        self.output.put_nowait(segment)
+                    else:
+                        self.dropped_partials += 1
+                except queue.Full:
+                    self.dropped_partials += 1
         except BaseException as exc:  # pragma: no cover - defensive
             self.error = exc
         finally:

@@ -10,6 +10,7 @@ from ..config import NLPConfig
 from .entities import Entity, EntityExtractor
 from .rules import Extraction, RuleEngine
 from .sentiment import SentimentEngine, SentimentScore
+from .summarize import ConversationDigest, DigestBuilder, TopicShift, TopicTracker
 
 
 @dataclass
@@ -22,6 +23,7 @@ class Insight:
     extractions: List[Extraction] = field(default_factory=list)
     rolling_sentiment: float = 0.0
     sentiment_momentum: float = 0.0
+    topic_shift: Optional[TopicShift] = None
     elapsed_ms: float = 0.0
     created_at: float = field(default_factory=time.time)
 
@@ -41,6 +43,7 @@ class Insight:
             "extractions": [item.as_dict() for item in self.extractions],
             "rolling_sentiment": self.rolling_sentiment,
             "sentiment_momentum": self.sentiment_momentum,
+            "topic_shift": self.topic_shift.as_dict() if self.topic_shift else None,
             "elapsed_ms": self.elapsed_ms,
             "created_at": self.created_at,
         }
@@ -52,6 +55,7 @@ class AnalyticsStats:
     total_ms: float = 0.0
     action_items: int = 0
     entities: int = 0
+    topic_shifts: int = 0
 
     @property
     def average_ms(self) -> float:
@@ -70,6 +74,15 @@ class AnalyticsEngine:
             if self.config.enable_sentiment
             else None
         )
+        self.topics = (
+            TopicTracker(window=self.config.topic_window, threshold=self.config.topic_threshold)
+            if self.config.enable_topics
+            else None
+        )
+        self.digests = DigestBuilder(
+            summary_limit=self.config.summary_sentences,
+            keyphrase_limit=self.config.keyphrase_limit,
+        )
         self.stats = AnalyticsStats()
 
     @property
@@ -78,7 +91,13 @@ class AnalyticsEngine:
             "rules": "enabled" if self.rules else "disabled",
             "entities": self.entities.backend,
             "sentiment": self.sentiment.engine_name if self.sentiment else "disabled",
+            "topics": "enabled" if self.topics else "disabled",
         }
+
+    def digest(self, lines: List[str], audio_seconds: float = 0.0) -> ConversationDigest:
+        return self.digests.build(
+            lines, audio_seconds, topics=self.topics.shifts if self.topics else []
+        )
 
     def analyse(self, text: str) -> Insight:
         started = time.perf_counter()
@@ -87,6 +106,7 @@ class AnalyticsEngine:
         extractions = self.rules.extract(cleaned) if self.rules else []
         entities = self.entities.extract(cleaned)
         score = self.sentiment.score(cleaned) if self.sentiment else None
+        shift = self.topics.push(cleaned) if self.topics and cleaned else None
 
         insight = Insight(
             text=cleaned,
@@ -95,6 +115,7 @@ class AnalyticsEngine:
             extractions=extractions,
             rolling_sentiment=self.sentiment.rolling_average if self.sentiment else 0.0,
             sentiment_momentum=self.sentiment.momentum() if self.sentiment else 0.0,
+            topic_shift=shift,
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
         )
 
@@ -102,4 +123,5 @@ class AnalyticsEngine:
         self.stats.total_ms += insight.elapsed_ms
         self.stats.action_items += len(insight.action_items)
         self.stats.entities += len(entities)
+        self.stats.topic_shifts += 1 if shift else 0
         return insight

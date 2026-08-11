@@ -94,7 +94,8 @@ def _print_stream(pipeline: LexiFlowPipeline, interval: float) -> None:
                 continue
             last_seq = item.seq
             marker = {"positive": "+", "negative": "-", "neutral": "="}.get(item.label, "=")
-            print(f"[{marker}{item.compound:+.2f}] {item.text}")
+            who = f"{item.speaker}: " if item.speaker else ""
+            print(f"[{marker}{item.compound:+.2f}] {who}{item.text}")
             for extraction in item.extractions:
                 if extraction["kind"] in {"action_item", "deadline", "blocker", "decision"}:
                     due = f" (due {extraction['due']})" if extraction["due"] else ""
@@ -127,6 +128,9 @@ def command_run(args: argparse.Namespace) -> int:
         pipeline.stop()
         health = pipeline.health()
         print(json.dumps(health.__dict__, indent=2))
+        if args.digest:
+            print()
+            print(pipeline.digest().as_markdown())
         if args.export:
             pipeline.store.export_json(Path(args.export))
             print(f"exported session to {args.export}")
@@ -180,10 +184,58 @@ def command_demo(args: argparse.Namespace) -> int:
         due = f" (due {action.due})" if action.due else ""
         print(f"  [p{action.priority}] {action.text}{due}")
 
+    digest = store.digest(analytics)
+    print()
+    print(digest.as_markdown())
     print(f"\naverage analytics latency: {analytics.stats.average_ms:.2f} ms")
     if args.export:
         store.export_json(Path(args.export))
         print(f"exported session to {args.export}")
+    store.close()
+    return 0
+
+
+def command_search(args: argparse.Namespace) -> int:
+    store = SessionStore(_load_config(args.config).state)
+    hits = store.search_all_sessions(args.query, limit=args.limit)
+    if not hits:
+        print("no matches")
+    for hit in hits:
+        label = hit["session_name"] or hit["session_id"]
+        print(f"[{label} #{hit['seq']}] {hit['text']}")
+    store.close()
+    return 0
+
+
+def command_sessions(args: argparse.Namespace) -> int:
+    store = SessionStore(_load_config(args.config).state)
+    rows = store.past_sessions(limit=args.limit)
+    for row in rows:
+        started = time.strftime("%Y-%m-%d %H:%M", time.localtime(row["started_at"] or 0))
+        print(f"{row['id']}  {started}  {row['name']}")
+    if not rows:
+        print("no recorded sessions")
+    store.close()
+    return 0
+
+
+def command_digest(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    store = SessionStore(config.state)
+    analytics = AnalyticsEngine(config.nlp)
+    session_id = args.session or store.latest_session_with_transcript()
+    if not session_id:
+        print("no recorded session has a transcript")
+        store.close()
+        return 1
+
+    rows = store.load_session(session_id)
+    if not rows:
+        print(f"session {session_id} has no transcript")
+        store.close()
+        return 1
+    digest = analytics.digest([row["text"] for row in rows])
+    print(digest.as_markdown())
     store.close()
     return 0
 
@@ -247,6 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--backend", help="force a specific backend")
     run.add_argument("--interval", type=float, default=0.25)
     run.add_argument("--export", help="write the session to a JSON file on exit")
+    run.add_argument("--digest", action="store_true", help="print a summary on exit")
     run.set_defaults(handler=command_run)
 
     replay = subparsers.add_parser("replay", help="push a wav file through the live pipeline")
@@ -261,6 +314,19 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--export")
     demo.add_argument("--no-persist", action="store_true")
     demo.set_defaults(handler=command_demo)
+
+    search = subparsers.add_parser("search", help="search the transcript of every session")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=25)
+    search.set_defaults(handler=command_search)
+
+    sessions = subparsers.add_parser("sessions", help="list recorded sessions")
+    sessions.add_argument("--limit", type=int, default=25)
+    sessions.set_defaults(handler=command_sessions)
+
+    digest = subparsers.add_parser("digest", help="summarise a recorded session")
+    digest.add_argument("--session", help="session id, defaults to the most recent one")
+    digest.set_defaults(handler=command_digest)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
