@@ -58,25 +58,26 @@ def _sidebar(pipeline: LexiFlowPipeline) -> None:
         pipeline.stop()
 
     st.sidebar.divider()
-    st.sidebar.write("**action items**")
-    actions = pipeline.store.actions()
-    if not actions:
-        st.sidebar.caption("nothing captured yet")
-    for action in actions:
-        due = f" · due {action.due}" if action.due else ""
-        checked = st.sidebar.checkbox(
-            f"{action.text}{due}", value=action.done, key=f"action-{action.identifier}"
-        )
-        if checked != action.done:
-            pipeline.store.toggle_action(action.identifier, checked)
-
-    st.sidebar.divider()
     injected = st.sidebar.text_input("inject transcript line", key="injector")
     if st.sidebar.button("submit line", use_container_width=True) and injected.strip():
         pipeline.submit_text(injected.strip())
     if st.sidebar.button("load demo conversation", use_container_width=True):
         for line in DEMO_LINES:
             pipeline.submit_text(line)
+
+    st.sidebar.divider()
+    st.sidebar.write("**action items**")
+    actions = pipeline.store.actions()
+    if not actions:
+        st.sidebar.caption("nothing captured yet")
+    for action in actions:
+        due = f" · due {action.due}" if action.due else ""
+        prefix = "" if action.kind == "action_item" else f"{action.kind.replace('_', ' ')}: "
+        checked = st.sidebar.checkbox(
+            f"{prefix}{action.text}{due}", value=action.done, key=f"action-{action.identifier}"
+        )
+        if checked != action.done:
+            pipeline.store.toggle_action(action.identifier, checked)
 
 
 def _metrics_row(snapshot: Dict[str, Any]) -> None:

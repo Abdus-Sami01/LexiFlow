@@ -1,7 +1,15 @@
 # LexiFlow
 
+[![ci](https://github.com/Abdus-Sami01/LexiFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/Abdus-Sami01/LexiFlow/actions/workflows/ci.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![ruff](https://img.shields.io/badge/lint-ruff-261230)](https://github.com/astral-sh/ruff)
+[![offline](https://img.shields.io/badge/cloud%20calls-zero-orange)](#)
+
 Real-time speech to structured insight, running entirely on your own CPU. Audio never leaves the
 machine, nothing is written to disk mid-stream, and there is no API key anywhere in the codebase.
+
+![LexiFlow dashboard](docs/dashboard.png)
 
 ```
 microphone ──► ring buffer ──► segmenter ──► whisper.cpp ──► analytics ──► state ──► dashboard
