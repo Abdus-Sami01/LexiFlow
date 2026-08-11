@@ -1,10 +1,4 @@
-"""Named entity extraction with a spaCy small model, or regex when it is absent.
-
-The spaCy ``en_core_web_sm`` pipeline is loaded with the parser and lemmatizer
-disabled, which is what keeps a single utterance under a few milliseconds on a
-laptop CPU. When the model is not installed the gazetteer below still catches
-the entity classes that matter for meeting notes.
-"""
+"""Named entity extraction with a spaCy small model, or regex when it is absent."""
 
 from __future__ import annotations
 

@@ -1,11 +1,4 @@
-"""Lexicon and arithmetic sentiment: no neural network, no cloud, no latency.
-
-If ``vaderSentiment`` is installed we defer to it because its lexicon is much
-larger. Otherwise the bundled analyser below implements the same idea —
-valence lookup, negation flipping, booster scaling, punctuation and caps
-emphasis, then a normalising curve — with a compact hand-picked lexicon so the
-feature keeps working on a machine with nothing but numpy installed.
-"""
+"""Lexicon and arithmetic sentiment: no neural network, no cloud, no latency."""
 
 from __future__ import annotations
 

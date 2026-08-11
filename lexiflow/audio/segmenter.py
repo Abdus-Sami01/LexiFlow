@@ -1,11 +1,4 @@
-"""Energy based speech segmentation with an adaptive noise floor.
-
-Whisper is happiest with utterance sized chunks. Feeding it fixed five second
-windows chops words in half; feeding it a whole minute blows the latency
-budget. This segmenter watches the short term RMS against a slowly adapting
-noise floor and emits a segment when the speaker pauses, when the maximum
-segment length is reached, or when the stream is flushed.
-"""
+"""Energy based speech segmentation with an adaptive noise floor."""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
-"""Deterministic pattern extraction for action items, deadlines and questions.
-
-Regex beats a transformer here on both accuracy and latency: the phrasing
-people use to assign work is small and highly conventional, and matching it
-costs microseconds instead of milliseconds.
-"""
+"""Deterministic pattern extraction for action items, deadlines and questions."""
 
 from __future__ import annotations
 

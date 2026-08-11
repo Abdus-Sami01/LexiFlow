@@ -1,10 +1,4 @@
-"""A lock guarded, fixed capacity ring buffer for mono float32 audio.
-
-The buffer never allocates after construction: samples are written into a
-pre-allocated numpy array and the read cursor simply chases the write cursor.
-That keeps the microphone callback allocation free, which is the only way to
-stay glitch free on a laptop that is also running Whisper on every core.
-"""
+"""A lock guarded, fixed capacity ring buffer for mono float32 audio."""
 
 from __future__ import annotations
 

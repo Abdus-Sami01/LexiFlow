@@ -1,12 +1,4 @@
-"""The producer/consumer orchestrator that holds all five phases together.
-
-Three isolated threads, two bounded queues, one shared store:
-
-    microphone -> [segment queue] -> whisper.cpp -> [utterance queue] -> analytics -> store
-
-Each stage owns its own thread, so a slow inference pass can never stall the
-microphone callback and a busy dashboard can never stall inference.
-"""
+"""The producer/consumer orchestrator that holds all five phases together."""
 
 from __future__ import annotations
 

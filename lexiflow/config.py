@@ -1,9 +1,4 @@
-"""Central configuration for every stage of the LexiFlow pipeline.
-
-Every tunable knob in the system lives here so that the audio producer, the
-inference consumer, the analytics consumer and the dashboard all agree on the
-same numbers without any of them importing each other.
-"""
+"""Central configuration for every stage of the LexiFlow pipeline."""
 
 from __future__ import annotations
 

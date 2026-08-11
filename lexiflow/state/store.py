@@ -1,11 +1,4 @@
-"""Thread-safe application state plus optional SQLite persistence and search.
-
-Readers (the dashboard) and writers (the analytics consumer) live on different
-threads, so every mutation goes through one re-entrant lock and every read
-returns a snapshot copy. The SQLite mirror is opened per thread and uses an
-FTS5 index when the interpreter was built with it, falling back to a LIKE scan
-otherwise.
-"""
+"""Thread-safe application state plus optional SQLite persistence and search."""
 
 from __future__ import annotations
 

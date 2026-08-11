@@ -1,9 +1,4 @@
-"""Detect the host CPU and emit the CMake flags that make whisper.cpp fast.
-
-Generic pip wheels are compiled for the lowest common denominator, which on a
-modern laptop leaves most of the vector units idle. This module reports what
-the machine actually supports and prints a ready-to-paste build command.
-"""
+"""Detect the host CPU and emit the CMake flags that make whisper.cpp fast."""
 
 from __future__ import annotations
 

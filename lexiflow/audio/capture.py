@@ -1,9 +1,4 @@
-"""Microphone capture: raw bytes from the sound card straight into RAM.
-
-No temporary ``.wav`` files, no subprocess, no disk I/O. The sound card
-callback does nothing but convert and hand the block to the ring buffer, and a
-generator on the consumer side yields segments as they complete.
-"""
+"""Microphone capture: raw bytes from the sound card straight into RAM."""
 
 from __future__ import annotations
 

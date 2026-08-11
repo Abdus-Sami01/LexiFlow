@@ -1,9 +1,4 @@
-"""Phase 5: the Streamlit control room for the local engine.
-
-Run it with ``python -m lexiflow dashboard``. The pipeline object lives in
-Streamlit's session state so that reruns of the script never restart the audio
-threads; the script only ever reads a snapshot.
-"""
+"""Phase 5: the Streamlit control room for the local engine."""
 
 from __future__ import annotations
 

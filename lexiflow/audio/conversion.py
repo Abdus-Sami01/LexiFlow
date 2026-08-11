@@ -1,9 +1,4 @@
-"""On-the-fly format conversion between whatever the sound card hands us and
-the 16 kHz mono float32 layout that Whisper insists on.
-
-Everything here is pure numpy so it runs inside the audio callback without
-touching the disk or the GIL for any meaningful length of time.
-"""
+"""On-the-fly format conversion between whatever the sound card hands us and"""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
-"""Native Whisper bindings that take a pointer to our audio, not a file path.
-
-Every backend here receives the same thing: a contiguous 16 kHz mono float32
-numpy array that is already sitting in RAM. Nothing is written to disk and no
-subprocess is spawned, so the only cost is the C++ inference itself.
-"""
+"""Native Whisper bindings that take a pointer to our audio, not a file path."""
 
 from __future__ import annotations
 
