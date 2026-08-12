@@ -545,6 +545,32 @@ class SessionStore:
             return []
         return [dict(row) for row in rows]
 
+    def load_actions(self, session_id: str) -> List[Dict[str, Any]]:
+        """Read a previous session's extracted items back out of SQLite."""
+        if not self.config.persist:
+            return []
+        try:
+            rows = self._connection().execute(
+                "SELECT id, kind, text, rule, due, priority, confidence, done, created_at"
+                " FROM action_items WHERE session_id = ? ORDER BY priority DESC, created_at",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [{**dict(row), "done": bool(row["done"])} for row in rows]
+
+    def session_info(self, session_id: str) -> Dict[str, Any]:
+        if not self.config.persist:
+            return {"id": session_id, "name": session_id}
+        try:
+            row = self._connection().execute(
+                "SELECT id, name, started_at, ended_at FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        except sqlite3.Error:
+            row = None
+        return dict(row) if row else {"id": session_id, "name": session_id}
+
     def digest(self, analytics, limit: Optional[int] = None):
         """Build a shareable digest from whatever has been transcribed so far."""
         items = self.transcript(limit)

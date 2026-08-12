@@ -7,13 +7,14 @@ import json
 import sys
 import time
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
 
-from . import __version__
-from .asr import backend_report, hardware
+from . import __version__, export
+from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
 from .audio.conversion import prepare_for_whisper
@@ -21,6 +22,29 @@ from .config import LexiFlowConfig
 from .nlp.pipeline import AnalyticsEngine
 from .pipeline import LexiFlowPipeline
 from .state.store import SessionStore
+
+
+@dataclass
+class _Row:
+    """Adapter so exporters can consume plain SQLite rows."""
+
+    seq: int
+    text: str
+    started_at: float
+    ended_at: float
+    compound: float = 0.0
+    label: str = "neutral"
+    speaker: Optional[str] = None
+
+    def as_dict(self) -> dict:
+        return {
+            "seq": self.seq,
+            "text": self.text,
+            "speaker": self.speaker,
+            "compound": self.compound,
+            "label": self.label,
+        }
+
 
 DEMO_LINES = [
     "Morning everyone, thanks for jumping on so quickly.",
@@ -36,6 +60,21 @@ DEMO_LINES = [
 
 def _load_config(path: Optional[str]) -> LexiFlowConfig:
     return LexiFlowConfig.load(path) if path else LexiFlowConfig()
+
+
+def _apply_model(config: LexiFlowConfig, requested: Optional[str]) -> Optional[str]:
+    """Accept a catalogue name or a path, and say so clearly when it is missing."""
+    if not requested:
+        return None
+    resolved = models.resolve(requested)
+    if resolved is None:
+        return (
+            f"model '{requested}' not found; run 'python -m lexiflow models get {requested}'"
+            if requested in models.CATALOGUE
+            else f"model '{requested}' not found on disk"
+        )
+    config.asr.model_path = resolved
+    return None
 
 
 def _read_wav(path: Path) -> tuple[np.ndarray, int]:
@@ -107,8 +146,10 @@ def command_run(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
     if args.device is not None:
         config.audio.device = args.device
-    if args.model:
-        config.asr.model_path = args.model
+    problem = _apply_model(config, args.model)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
     if args.backend:
         config.asr.backend = args.backend
 
@@ -140,8 +181,10 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_replay(args: argparse.Namespace) -> int:
     config = _load_config(args.config)
-    if args.model:
-        config.asr.model_path = args.model
+    problem = _apply_model(config, args.model)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
     if args.backend:
         config.asr.backend = args.backend
 
@@ -241,6 +284,130 @@ def command_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _progress(written: int, total: int) -> None:
+    if not total:
+        return
+    share = written / total
+    filled = int(share * 30)
+    sys.stderr.write(
+        f"\r  [{'#' * filled}{'.' * (30 - filled)}] {share * 100:5.1f}% "
+        f"({written / (1 << 20):.0f}/{total / (1 << 20):.0f} MB)"
+    )
+    sys.stderr.flush()
+
+
+def command_models(args: argparse.Namespace) -> int:
+    if args.action == "list":
+        print(f"models directory: {models.models_directory()}\n")
+        print(f"{'name':<16}{'size':>8}  {'state':<12}note")
+        for row in models.describe_catalogue():
+            state = "installed" if row["installed"] else "-"
+            print(f"{row['name']:<16}{row['megabytes']:>6} MB  {state:<12}{row['note']}")
+        extras = [
+            item
+            for item in models.installed_models()
+            if item["filename"] not in {spec.filename for spec in models.CATALOGUE.values()}
+        ]
+        for item in extras:
+            print(f"{item['filename']:<16}{item['megabytes']:>6} MB  local")
+        return 0
+
+    if args.action == "path":
+        resolved = models.resolve(args.name)
+        if resolved is None:
+            print(f"{args.name} is not installed", file=sys.stderr)
+            return 1
+        print(resolved)
+        return 0
+
+    if args.name not in models.CATALOGUE:
+        print(
+            f"unknown model '{args.name}', choose from {', '.join(sorted(models.CATALOGUE))}",
+            file=sys.stderr,
+        )
+        return 1
+
+    spec = models.CATALOGUE[args.name]
+    if models.is_installed(args.name) and not args.force:
+        print(f"{args.name} already at {models.local_path(args.name)}")
+        return 0
+
+    print(f"downloading {spec.filename} ({spec.megabytes} MB) from {spec.url}")
+    try:
+        path = models.download(args.name, force=args.force, progress=_progress)
+    except RuntimeError as exc:
+        sys.stderr.write("\n")
+        print(exc, file=sys.stderr)
+        return 1
+    sys.stderr.write("\n")
+    print(f"saved to {path}")
+    return 0
+
+
+def _speaker_rows(rows: List["_Row"]) -> List[dict]:
+    totals: dict = {}
+    for row in rows:
+        if not row.speaker:
+            continue
+        bucket = totals.setdefault(row.speaker, {"lines": 0, "seconds": 0.0, "compound": 0.0})
+        bucket["lines"] += 1
+        bucket["seconds"] += max(0.0, row.ended_at - row.started_at)
+        bucket["compound"] += row.compound
+    if not totals:
+        return []
+    grand = sum(item["seconds"] for item in totals.values()) or 1.0
+    return [
+        {
+            "label": label,
+            "lines": item["lines"],
+            "seconds": round(item["seconds"], 2),
+            "share": round(item["seconds"] / grand, 4),
+            "average_sentiment": round(item["compound"] / max(1, item["lines"]), 4),
+        }
+        for label, item in sorted(totals.items())
+    ]
+
+
+def command_export(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    store = SessionStore(config.state)
+    analytics = AnalyticsEngine(config.nlp)
+
+    session_id = args.session or store.latest_session_with_transcript()
+    if not session_id:
+        print("no recorded session has a transcript", file=sys.stderr)
+        store.close()
+        return 1
+
+    rows = [_Row(**row) for row in store.load_session(session_id)]
+    if not rows:
+        print(f"session {session_id} has no transcript", file=sys.stderr)
+        store.close()
+        return 1
+
+    actions = store.load_actions(session_id)
+    info = store.session_info(session_id)
+    payload = {
+        "session": info,
+        "metrics": {"utterances": len(rows), "total_actions": len(actions)},
+        "transcript": [row.as_dict() for row in rows],
+        "actions": actions,
+        "speakers": _speaker_rows(rows),
+        "entities": {},
+    }
+    digest = analytics.digest([row.text for row in rows])
+
+    formats = args.format or ["md"]
+    if args.output:
+        written = export.write_many(formats, Path(args.output), rows, payload, digest)
+        for path in written:
+            print(f"wrote {path}")
+    else:
+        print(export.render(formats[0], rows, payload, digest))
+    store.close()
+    return 0
+
+
 def command_dashboard(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import cli as streamlit_cli
@@ -251,7 +418,15 @@ def command_dashboard(args: argparse.Namespace) -> int:
         )
         return 1
     target = str(Path(__file__).resolve().parent / "ui" / "dashboard.py")
-    sys.argv = ["streamlit", "run", target, "--server.port", str(args.port)]
+    sys.argv = [
+        "streamlit",
+        "run",
+        target,
+        "--server.port",
+        str(args.port),
+        "--server.address",
+        args.address,
+    ]
     return int(streamlit_cli.main() or 0)
 
 
@@ -330,8 +505,23 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument("--session", help="session id, defaults to the most recent one")
     digest.set_defaults(handler=command_digest)
 
+    model_parser = subparsers.add_parser("models", help="list or download ggml Whisper models")
+    model_parser.add_argument("action", choices=["list", "get", "path"], nargs="?", default="list")
+    model_parser.add_argument("name", nargs="?", default="base.en")
+    model_parser.add_argument("--force", action="store_true")
+    model_parser.set_defaults(handler=command_models)
+
+    export_parser = subparsers.add_parser("export", help="export a session as srt/vtt/txt/md/json")
+    export_parser.add_argument("--session", help="session id, defaults to the most recent one")
+    export_parser.add_argument(
+        "--format", action="append", choices=sorted(export.FORMATS), help="repeatable"
+    )
+    export_parser.add_argument("--output", help="path stem; prints to stdout when omitted")
+    export_parser.set_defaults(handler=command_export)
+
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
+    dashboard.add_argument("--address", default="localhost", help="0.0.0.0 inside a container")
     dashboard.set_defaults(handler=command_dashboard)
 
     bench = subparsers.add_parser("bench", help="measure analytics latency")

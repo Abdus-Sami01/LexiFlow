@@ -1,5 +1,6 @@
 """LexiFlow: a fully local, real-time speech-to-insight engine."""
 
+from . import export
 from .config import (
     ASRConfig,
     AudioConfig,
@@ -23,5 +24,6 @@ __all__ = [
     "PipelineHealth",
     "SegmenterConfig",
     "StateConfig",
+    "export",
     "__version__",
 ]

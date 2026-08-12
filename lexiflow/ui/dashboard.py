@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 import streamlit as st
 
+from lexiflow import export
 from lexiflow.asr.backends import backend_report
 from lexiflow.audio.capture import AudioBackendUnavailable, list_input_devices
 from lexiflow.cli import DEMO_LINES
@@ -181,6 +182,22 @@ def _digest_panel(pipeline: LexiFlowPipeline) -> None:
         st.caption(
             f"{digest.word_count} words · {digest.unique_words} unique "
             f"· {digest.speaking_rate:.0f} wpm"
+        )
+        _download_row(pipeline, digest)
+
+
+def _download_row(pipeline: LexiFlowPipeline, digest) -> None:
+    rows = pipeline.store.transcript()
+    payload = pipeline.store.export()
+    stem = pipeline.store.session_name
+    columns = st.columns(len(export.FORMATS))
+    for column, fmt in zip(columns, sorted(export.FORMATS)):
+        column.download_button(
+            f".{fmt}",
+            data=export.render(fmt, rows, payload, digest),
+            file_name=f"{stem}{export.FORMATS[fmt]}",
+            use_container_width=True,
+            key=f"download-{fmt}",
         )
 
 

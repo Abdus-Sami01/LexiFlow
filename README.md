@@ -56,17 +56,30 @@ backend, and without spaCy or vaderSentiment the bundled regex and lexicon paths
 
 ```bash
 python -m lexiflow doctor              # hardware, backends, devices
+python -m lexiflow models list         # catalogue of ggml weights and what is installed
+python -m lexiflow models get base.en  # download it, resumable, into ~/.lexiflow/models
 python -m lexiflow build               # tuned whisper.cpp build command for this machine
 python -m lexiflow devices             # list input devices
-python -m lexiflow run --model models/ggml-base.en.bin
-python -m lexiflow replay meeting.wav --model models/ggml-base.en.bin  # drains before exit
+python -m lexiflow run --model base.en
+python -m lexiflow replay meeting.wav --model base.en   # drains the queue before exit
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
 python -m lexiflow bench               # analytics latency
 python -m lexiflow sessions            # list everything recorded so far
 python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
+python -m lexiflow export --format srt --format md --output notes
 ```
+
+`--model` takes either a catalogue name (`base.en`) or a path to a `.bin`. Names resolve against
+`~/.lexiflow/models`, overridable with `LEXIFLOW_MODELS`; a missing model tells you the exact
+command to fetch it instead of failing deep inside the backend.
+
+Exports cover `srt`, `vtt`, `txt`, `md` and `json`. Subtitle cues are made monotonic and
+non-overlapping, and short utterances get a minimum on-screen duration, so the files load cleanly
+in players that reject overlapping cues. The markdown export is a meeting-note document: summary,
+keyphrases, action-item checkboxes, speaker table, entities and the full transcript. The same five
+formats are one click away in the dashboard's session digest panel.
 
 As a library:
 
@@ -84,6 +97,17 @@ print(pipeline.digest().as_markdown())
 print(pipeline.store.speakers())
 print(pipeline.store.export_json())
 ```
+
+## Docker
+
+```bash
+docker build -t lexiflow .
+docker run --rm -p 8501:8501 -v lexiflow-data:/data lexiflow
+```
+
+The image ships the dashboard on `0.0.0.0:8501` and keeps sessions and models in the `/data`
+volume. Microphone capture inside a container needs the host's audio device passed through, which
+is platform specific; file replay and text injection work out of the box.
 
 ## Building whisper.cpp for your CPU
 
@@ -124,6 +148,7 @@ CPU use on a slow machine, `diarization.enabled = false` skips the MFCC pass, an
 | `lexiflow/nlp/` | 3 | rule engine, entity extractor, sentiment, summarisation, analytics pipeline |
 | `lexiflow/state/` | 4 | thread-safe store, SQLite persistence and search, analytics thread |
 | `lexiflow/ui/` | 5 | Streamlit dashboard |
+| `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
 | `lexiflow/pipeline.py` | — | orchestrator that owns the three threads and both queues |
 
 ## Tests
@@ -133,10 +158,40 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-65 tests cover the ring buffer, resampling, segmentation and partial emission, every rule family,
+84 tests cover the ring buffer, resampling, segmentation and partial emission, every rule family,
 sentiment negation and momentum, the MFCC frontend and speaker clustering, TextRank, RAKE and topic
-drift, the store's persistence and cross-session search, queue draining against a deliberately slow
-backend, and full audio-to-insight passes through all three threads using a scripted ASR backend.
+drift, subtitle cue timing, every export format, the model catalogue, the store's persistence and
+cross-session search, queue draining against a deliberately slow backend, and full
+audio-to-insight passes through all three threads using a scripted ASR backend.
+
+## Limitations
+
+Worth knowing before you rely on it:
+
+- **The analytics layer is English-only.** Whisper itself is multilingual and the multilingual
+  models are in the catalogue, but the rule patterns, the sentiment lexicon and the stopword list
+  are all English. Transcription of other languages works; the insight layer will produce noise.
+- **Speaker attribution is heuristic.** MFCC centroid clustering separates clearly different
+  voices well, but it degrades with similar voices, crosstalk and heavy background noise, and it
+  cannot split two people talking over each other inside one segment. It assigns a label per
+  segment, not per word. Treat the labels as a strong hint, not ground truth.
+- **Segmentation is energy-based, not a neural VAD.** It adapts to a steady noise floor, but
+  sustained non-speech noise (a fan, music, a busy cafe) will trigger segments.
+- **Summarisation is extractive.** TextRank selects the most central sentences that were actually
+  said; it never writes a new one. That keeps it honest and free, but it will not paraphrase.
+- **Partial hypotheses re-transcribe a growing window,** so with partials on, CPU cost per
+  utterance is roughly doubled. Turn them off on a slow machine.
+- **Latency depends entirely on the model you pick.** `base.en` runs comfortably faster than
+  realtime on a modern laptop; `large-v3` does not.
+- **The subtitle timings come from segment boundaries,** not from Whisper's word-level timestamps,
+  so cue edges are approximate to within the silence hangover.
+
+## Roadmap
+
+- Word-level timestamps from the backends, for exact subtitle alignment
+- A `textual` terminal dashboard alongside the Streamlit one
+- Speaker enrolment, so labels become real names that persist across sessions
+- Language detection that disables the English-only analytics automatically
 
 ## License
 
