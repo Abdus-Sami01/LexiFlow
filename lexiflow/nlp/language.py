@@ -67,7 +67,7 @@ DIACRITIC_HINTS: Dict[str, str] = {
     "nl": "ëïĳ",
 }
 
-ANALYTICS_LANGUAGES = frozenset({"en", "es", "fr", "de"})
+ANALYTICS_LANGUAGES = frozenset({"en", "es", "fr", "de", "it", "pt"})
 MIN_TOKENS_FOR_CONFIDENCE = 4
 
 

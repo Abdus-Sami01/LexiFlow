@@ -43,22 +43,52 @@ GERMAN_LEXICON: Dict[str, float] = {
     "verloren": -1.8, "verwirrt": -1.8, "angst": -2.3, "leider": -1.4,
 }
 
+ITALIAN_LEXICON: Dict[str, float] = {
+    "eccellente": 2.9, "ottimo": 2.7, "buono": 1.9, "buona": 1.9, "meglio": 1.9, "perfetto": 3.0,
+    "grazie": 2.2, "felice": 2.6, "contento": 2.3, "adoro": 2.7, "incredibile": 2.6,
+    "fantastico": 3.0, "successo": 2.7, "pronto": 1.4, "risolto": 2.0, "accordo": 1.5,
+    "tranquillo": 1.5, "sicuro": 1.7, "veloce": 1.4, "chiaro": 1.4, "utile": 2.0, "forte": 1.6,
+    "cattivo": -2.5, "peggio": -2.4, "terribile": -2.8, "orribile": -2.9, "problema": -1.9,
+    "errore": -2.0, "guasto": -2.4, "ritardo": -1.8, "preoccupato": -2.1, "triste": -2.4,
+    "arrabbiato": -2.5, "difficile": -1.6, "impossibile": -2.2, "rischio": -1.6,
+    "urgente": -1.4, "bloccato": -2.0, "rotto": -2.3, "lento": -1.6, "caro": -1.3,
+    "perso": -1.8, "confuso": -1.8, "paura": -2.3, "scusa": -1.2,
+}
+
+PORTUGUESE_LEXICON: Dict[str, float] = {
+    "excelente": 2.9, "ótimo": 2.7, "bom": 1.9, "boa": 1.9, "melhor": 1.9, "perfeito": 3.0,
+    "obrigado": 2.2, "feliz": 2.6, "contente": 2.3, "adoro": 2.7, "incrível": 2.8,
+    "fantástico": 3.0, "sucesso": 2.7, "pronto": 1.4, "resolvido": 2.0, "acordo": 1.5,
+    "tranquilo": 1.5, "seguro": 1.7, "rápido": 1.4, "claro": 1.4, "útil": 2.0, "forte": 1.6,
+    "ruim": -2.5, "pior": -2.4, "terrível": -2.8, "horrível": -2.9, "problema": -1.9,
+    "erro": -2.0, "falha": -2.4, "atraso": -1.8, "preocupado": -2.1, "triste": -2.4,
+    "irritado": -2.5, "difícil": -1.6, "impossível": -2.2, "risco": -1.6, "urgente": -1.4,
+    "bloqueado": -2.0, "quebrado": -2.3, "lento": -1.6, "caro": -1.3, "perdido": -1.8,
+    "confuso": -1.8, "medo": -2.3, "desculpa": -1.2,
+}
+
 LEXICONS: Dict[str, Dict[str, float]] = {
     "es": SPANISH_LEXICON,
     "fr": FRENCH_LEXICON,
     "de": GERMAN_LEXICON,
+    "it": ITALIAN_LEXICON,
+    "pt": PORTUGUESE_LEXICON,
 }
 
 NEGATIONS: Dict[str, frozenset] = {
     "es": frozenset({"no", "nunca", "nada", "ni", "jamás", "tampoco", "sin"}),
     "fr": frozenset({"ne", "pas", "jamais", "rien", "aucun", "sans", "ni"}),
     "de": frozenset({"nicht", "kein", "keine", "keinen", "nie", "niemals", "ohne", "nichts"}),
+    "it": frozenset({"non", "mai", "niente", "nessuno", "senza", "né"}),
+    "pt": frozenset({"não", "nunca", "nada", "nenhum", "sem", "nem", "jamais"}),
 }
 
 BOOSTERS: Dict[str, Dict[str, float]] = {
     "es": {"muy": 0.293, "súper": 0.293, "bastante": 0.193, "poco": -0.293, "algo": -0.193},
     "fr": {"très": 0.293, "vraiment": 0.293, "assez": 0.193, "peu": -0.293, "un_peu": -0.293},
     "de": {"sehr": 0.293, "wirklich": 0.293, "ziemlich": 0.193, "kaum": -0.293, "etwas": -0.193},
+    "it": {"molto": 0.293, "davvero": 0.293, "abbastanza": 0.193, "poco": -0.293},
+    "pt": {"muito": 0.293, "realmente": 0.293, "bastante": 0.193, "pouco": -0.293},
 }
 
 STOPWORDS: Dict[str, frozenset] = {
@@ -77,6 +107,16 @@ STOPWORDS: Dict[str, frozenset] = {
         """der die das und in den von zu mit sich des auf für ist im dem nicht ein eine als
         auch es an werden aus er hat dass sie nach wird bei einer um am sind noch wie einem
         über einen so zum haben nur oder aber vor bis mehr durch man sein wurde sei""".split()
+    ),
+    "it": frozenset(
+        """di che il la e in un per una non con sono mi ma come questo più anche molto quando
+        perché cosa tutto solo adesso noi loro essere fare avere dove chi tempo anno giorno
+        sempre mai ancora dopo prima nel del alla dei delle degli""".split()
+    ),
+    "pt": frozenset(
+        """de que não para com uma você por mais isso está muito como mas quando porque então
+        aqui agora sim nós eles fazer ter ser tempo ano dia sempre nunca ainda depois antes
+        tudo nada algo outro esse essa dos das nas nos pelo pela""".split()
     ),
 }
 
@@ -232,10 +272,104 @@ GERMAN_RULES: List[RuleSpec] = [
     ),
 ]
 
+ITALIAN_RULES: List[RuleSpec] = [
+    RuleSpec(
+        "promemoria",
+        "action_item",
+        _compile(r"\bricordami\s+(?:di\s+)?(.+?)(?=[.?!;]|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "impegno",
+        "action_item",
+        _compile(r"\b(?:devo|dobbiamo|bisogna)\s+(.+?)(?=[.?!;]|$)"),
+        0.85,
+    ),
+    RuleSpec(
+        "richiesta",
+        "action_item",
+        _compile(r"\b(?:puoi|potresti|potete)\s+(?:per favore\s+)?(.+?)(?=[.?!;]|$)"),
+        0.8,
+    ),
+    RuleSpec(
+        "scadenza",
+        "deadline",
+        _compile(r"\b(?:scadenza|termine)\s+(?:è|era)?\s*(.+?)(?=[.?!;,]|\s+e\b|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "consegna",
+        "deadline",
+        _compile(r"\b(?:entro|prima di)\s+(luned[ìi]|marted[ìi]|mercoled[ìi]|gioved[ìi]|"
+                 r"venerd[ìi]|sabato|domenica|domani|oggi|fine settimana)\b"),
+        0.85,
+    ),
+    RuleSpec(
+        "blocco",
+        "blocker",
+        _compile(r"\b(?:sono bloccato|bloccato (?:su|da))\s+(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+    RuleSpec(
+        "decisione",
+        "decision",
+        _compile(r"\b(?:abbiamo deciso|si è deciso)\s+(?:di\s+|che\s+)?(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+]
+
+PORTUGUESE_RULES: List[RuleSpec] = [
+    RuleSpec(
+        "lembrete",
+        "action_item",
+        _compile(r"\blembre?-?me\s+(?:de\s+)?(.+?)(?=[.?!;]|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "compromisso",
+        "action_item",
+        _compile(r"\b(?:vou|precisamos|preciso|temos que)\s+(.+?)(?=[.?!;]|$)"),
+        0.85,
+    ),
+    RuleSpec(
+        "pedido",
+        "action_item",
+        _compile(r"\b(?:voc[êe] pode|poderia)\s+(?:por favor\s+)?(.+?)(?=[.?!;]|$)"),
+        0.8,
+    ),
+    RuleSpec(
+        "prazo",
+        "deadline",
+        _compile(r"\b(?:prazo|data limite)\s+(?:é|era)?\s*(.+?)(?=[.?!;,]|\s+e\b|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "entrega",
+        "deadline",
+        _compile(r"\b(?:at[ée]|antes de)\s+(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|"
+                 r"domingo|amanh[ãa]|hoje|fim de semana)\b"),
+        0.85,
+    ),
+    RuleSpec(
+        "bloqueio",
+        "blocker",
+        _compile(r"\b(?:estou bloqueado|bloqueado (?:em|por)|travado em)\s+(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+    RuleSpec(
+        "decisao",
+        "decision",
+        _compile(r"\b(?:decidimos|n[óo]s decidimos)\s+(?:que\s+)?(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+]
+
 RULE_PACKS: Dict[str, List[RuleSpec]] = {
     "es": SPANISH_RULES,
     "fr": FRENCH_RULES,
     "de": GERMAN_RULES,
+    "it": ITALIAN_RULES,
+    "pt": PORTUGUESE_RULES,
 }
 
 

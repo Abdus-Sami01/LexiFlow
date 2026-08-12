@@ -7,7 +7,7 @@ import json
 import sys
 import time
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
@@ -35,6 +35,7 @@ class _Row:
     compound: float = 0.0
     label: str = "neutral"
     speaker: Optional[str] = None
+    spans: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -398,12 +399,15 @@ def command_export(args: argparse.Namespace) -> int:
     digest = analytics.digest([row.text for row in rows])
 
     formats = args.format or ["md"]
+    granularity = "word" if args.words else "segment"
     if args.output:
-        written = export.write_many(formats, Path(args.output), rows, payload, digest)
+        written = export.write_many(
+            formats, Path(args.output), rows, payload, digest, granularity=granularity
+        )
         for path in written:
             print(f"wrote {path}")
     else:
-        print(export.render(formats[0], rows, payload, digest))
+        print(export.render(formats[0], rows, payload, digest, granularity=granularity))
     store.close()
     return 0
 
@@ -428,6 +432,23 @@ def command_dashboard(args: argparse.Namespace) -> int:
         args.address,
     ]
     return int(streamlit_cli.main() or 0)
+
+
+def command_tui(args: argparse.Namespace) -> int:
+    try:
+        from .ui.tui import LexiFlowTUI
+    except Exception:
+        print("textual is not installed: pip install 'lexiflow[tui]'", file=sys.stderr)
+        return 1
+    config = _load_config(args.config)
+    problem = _apply_model(config, args.model)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    if args.backend:
+        config.asr.backend = args.backend
+    LexiFlowTUI(LexiFlowPipeline(config), refresh_seconds=args.interval).run()
+    return 0
 
 
 def command_bench(args: argparse.Namespace) -> int:
@@ -517,12 +538,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", action="append", choices=sorted(export.FORMATS), help="repeatable"
     )
     export_parser.add_argument("--output", help="path stem; prints to stdout when omitted")
+    export_parser.add_argument(
+        "--words", action="store_true", help="one subtitle cue per word where the backend gave us"
+    )
     export_parser.set_defaults(handler=command_export)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
     dashboard.add_argument("--address", default="localhost", help="0.0.0.0 inside a container")
     dashboard.set_defaults(handler=command_dashboard)
+
+    tui = subparsers.add_parser("tui", help="terminal dashboard, no browser needed")
+    tui.add_argument("--model")
+    tui.add_argument("--backend")
+    tui.add_argument("--interval", type=float, default=1.0)
+    tui.set_defaults(handler=command_tui)
 
     bench = subparsers.add_parser("bench", help="measure analytics latency")
     bench.add_argument("--iterations", type=int, default=25)

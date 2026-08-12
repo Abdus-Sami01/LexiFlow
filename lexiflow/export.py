@@ -36,20 +36,34 @@ def _clock(seconds: float, separator: str) -> str:
     return f"{hours:02d}:{minutes:02d}:{whole:02d}{separator}{milliseconds:03d}"
 
 
-def _row_spans(row: Any) -> List[Dict[str, Any]]:
+def _row_spans(row: Any, granularity: str = "segment") -> List[Dict[str, Any]]:
     """Prefer the backend's own timings, falling back to the segment boundary."""
     spans = [
         span
         for span in (getattr(row, "spans", None) or [])
         if (span.get("text") or "").strip() and span.get("end", 0) > span.get("start", 0)
     ]
+
+    if granularity == "word":
+        words = [
+            word
+            for span in spans
+            for word in (span.get("words") or [])
+            if (word.get("text") or "").strip() and word.get("end", 0) > word.get("start", 0)
+        ]
+        if words:
+            return words
+
     if spans:
         return spans
     return [{"start": row.started_at, "end": row.ended_at, "text": row.text}]
 
 
 def to_cues(
-    items: Sequence[Any], origin: Optional[float] = None, use_spans: bool = True
+    items: Sequence[Any],
+    origin: Optional[float] = None,
+    use_spans: bool = True,
+    granularity: str = "segment",
 ) -> List[Cue]:
     """Normalise transcript rows into monotonic, non-overlapping subtitle cues."""
     rows = [item for item in items if getattr(item, "text", "").strip()]
@@ -60,9 +74,11 @@ def to_cues(
     units: List[Dict[str, Any]] = []
     for row in rows:
         speaker = getattr(row, "speaker", None)
-        pieces = _row_spans(row) if use_spans else [
-            {"start": row.started_at, "end": row.ended_at, "text": row.text}
-        ]
+        pieces = (
+            _row_spans(row, granularity)
+            if use_spans
+            else [{"start": row.started_at, "end": row.ended_at, "text": row.text}]
+        )
         for piece in pieces:
             units.append({**piece, "speaker": speaker})
 
@@ -90,9 +106,14 @@ def to_cues(
     return cues
 
 
-def to_srt(items: Sequence[Any], origin: Optional[float] = None, speakers: bool = True) -> str:
+def to_srt(
+    items: Sequence[Any],
+    origin: Optional[float] = None,
+    speakers: bool = True,
+    granularity: str = "segment",
+) -> str:
     blocks = []
-    for cue in to_cues(items, origin):
+    for cue in to_cues(items, origin, granularity=granularity):
         blocks.append(
             f"{cue.index}\n"
             f"{_clock(cue.start, ',')} --> {_clock(cue.end, ',')}\n"
@@ -101,9 +122,14 @@ def to_srt(items: Sequence[Any], origin: Optional[float] = None, speakers: bool 
     return "\n".join(blocks)
 
 
-def to_vtt(items: Sequence[Any], origin: Optional[float] = None, speakers: bool = True) -> str:
+def to_vtt(
+    items: Sequence[Any],
+    origin: Optional[float] = None,
+    speakers: bool = True,
+    granularity: str = "segment",
+) -> str:
     blocks = ["WEBVTT\n"]
-    for cue in to_cues(items, origin):
+    for cue in to_cues(items, origin, granularity=granularity):
         blocks.append(
             f"{_clock(cue.start, '.')} --> {_clock(cue.end, '.')}\n"
             f"{cue.labelled(speakers)}\n"
@@ -205,11 +231,12 @@ def render(
     payload: Optional[Dict[str, Any]] = None,
     digest: Optional[Any] = None,
     speakers: bool = True,
+    granularity: str = "segment",
 ) -> str:
     """Single entry point used by the CLI and the dashboard download buttons."""
     renderers: Dict[str, Callable[[], str]] = {
-        "srt": lambda: to_srt(items, speakers=speakers),
-        "vtt": lambda: to_vtt(items, speakers=speakers),
+        "srt": lambda: to_srt(items, speakers=speakers, granularity=granularity),
+        "vtt": lambda: to_vtt(items, speakers=speakers, granularity=granularity),
         "txt": lambda: to_text(items, speakers=speakers),
         "md": lambda: to_markdown(payload or {}, digest),
         "json": lambda: to_json(payload or {}),
@@ -226,12 +253,15 @@ def write(
     payload: Optional[Dict[str, Any]] = None,
     digest: Optional[Any] = None,
     speakers: bool = True,
+    granularity: str = "segment",
 ) -> Path:
     target = Path(destination)
     if target.suffix == "":
         target = target.with_suffix(FORMATS[fmt])
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render(fmt, items, payload, digest, speakers), encoding="utf-8")
+    target.write_text(
+        render(fmt, items, payload, digest, speakers, granularity), encoding="utf-8"
+    )
     return target
 
 
@@ -242,9 +272,10 @@ def write_many(
     payload: Optional[Dict[str, Any]] = None,
     digest: Optional[Any] = None,
     speakers: bool = True,
+    granularity: str = "segment",
 ) -> List[Path]:
     base = Path(stem)
     return [
-        write(fmt, base.with_suffix(FORMATS[fmt]), items, payload, digest, speakers)
+        write(fmt, base.with_suffix(FORMATS[fmt]), items, payload, digest, speakers, granularity)
         for fmt in formats
     ]

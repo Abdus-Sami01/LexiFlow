@@ -11,6 +11,10 @@ machine, nothing is written to disk mid-stream, and there is no API key anywhere
 
 ![LexiFlow dashboard](docs/dashboard.png)
 
+Prefer the terminal? Same engine, same keystrokes away:
+
+![LexiFlow terminal dashboard](docs/tui.png)
+
 ```
 microphone ──► ring buffer ──► segmenter ──► whisper.cpp ──► analytics ──► state ──► dashboard
    thread 1                     │             thread 2        thread 3            read-only
@@ -26,9 +30,9 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   passing the numpy array directly to C++ instead of shelling out to a binary.
 - Extracts action items, deadlines, blockers, decisions, entities and sentiment from each line in
   well under a millisecond, using regex rules, a small spaCy model and a lexicon-based scorer.
-  English, Spanish, French and German each have their own rule pack and valence lexicon; the
-  language is detected per line and the analytics step aside entirely for anything else rather
-  than emitting nonsense.
+  English, Spanish, French, German, Italian and Portuguese each have their own rule pack and
+  valence lexicon; the language is detected per line and the analytics step aside entirely for
+  anything else rather than emitting nonsense.
 - Attributes each utterance to a speaker with online MFCC clustering: a numpy mel-filterbank and
   DCT frontend feeds cosine-similarity centroids that grow as new voices appear. When two people
   speak inside one segment it finds the change point and splits the segment there. Name a cluster
@@ -42,15 +46,15 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   no longer opens a segment the way a plain energy threshold would.
 - Keeps the microphone, inference and analytics on three isolated threads joined by bounded queues,
   so a slow transcription pass can never drop audio.
-- Ships a Streamlit dashboard with a live transcript, action-item checklist, sentiment timeline,
-  speaker share bars, topic-shift log, an expandable digest, and search that spans every session
-  ever recorded.
+- Ships two dashboards over the same engine: a Streamlit one with a live transcript, action-item
+  checklist, sentiment timeline, speaker share bars, topic-shift log, digest and cross-session
+  search, and a Textual one for the terminal with the same panels on single-key bindings.
 
 ## Install
 
 ```bash
 pip install -e ".[all]"          # everything
-pip install -e ".[audio,ui]"     # capture + dashboard, bring your own ASR
+pip install -e ".[audio,ui]"     # capture + dashboards, bring your own ASR
 python -m spacy download en_core_web_sm
 ```
 
@@ -70,18 +74,21 @@ python -m lexiflow run --model base.en
 python -m lexiflow replay meeting.wav --model base.en   # drains the queue before exit
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
+python -m lexiflow tui                 # terminal dashboard, no browser
 python -m lexiflow bench               # analytics latency
 python -m lexiflow sessions            # list everything recorded so far
 python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
 python -m lexiflow export --format srt --format md --output notes
+python -m lexiflow export --format srt --words --output captions
 ```
 
 `--model` takes either a catalogue name (`base.en`) or a path to a `.bin`. Names resolve against
 `~/.lexiflow/models`, overridable with `LEXIFLOW_MODELS`; a missing model tells you the exact
 command to fetch it instead of failing deep inside the backend.
 
-Exports cover `srt`, `vtt`, `txt`, `md` and `json`. Subtitle cues are made monotonic and
+Exports cover `srt`, `vtt`, `txt`, `md` and `json`. `--words` emits one cue per word wherever the
+backend gave word timings, otherwise it falls back to segment timings. Subtitle cues are made monotonic and
 non-overlapping, and short utterances get a minimum on-screen duration, so the files load cleanly
 in players that reject overlapping cues. The markdown export is a meeting-note document: summary,
 keyphrases, action-item checkboxes, speaker table, entities and the full transcript. The same five
@@ -156,7 +163,7 @@ the pipeline is unaffected.
 | `lexiflow/asr/` | 2 | hardware detection, native backends, transcription thread |
 | `lexiflow/nlp/` | 3 | rules, entities, sentiment, summarisation, language routing, multilingual packs |
 | `lexiflow/state/` | 4 | thread-safe store, SQLite persistence and search, analytics thread |
-| `lexiflow/ui/` | 5 | Streamlit dashboard |
+| `lexiflow/ui/` | 5 | Streamlit dashboard and Textual terminal dashboard |
 | `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
 | `lexiflow/pipeline.py` | — | orchestrator that owns the three threads and both queues |
 
@@ -167,24 +174,25 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-125 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+129 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
 topic drift, filler compression, subtitle cue timing from backend spans, every export format, the
 model catalogue, the store's persistence and cross-session search, queue draining against a
-deliberately slow backend, and full audio-to-insight passes through all three threads.
+deliberately slow backend, the terminal dashboard driven headlessly through its key bindings, and
+full audio-to-insight passes through all three threads.
 
 ## Limitations
 
 What is still true, stated plainly:
 
-- **Analytics covers four languages, not every language.** English, Spanish, French and German
-  have rule packs and lexicons. Detection recognises those plus Italian, Portuguese and Dutch, and
-  for anything outside the supported four the rules and sentiment switch themselves off — you get
-  a clean transcript and no invented insight. Adding a language means adding a lexicon and a rule
+- **Analytics covers six languages, not every language.** English, Spanish, French, German,
+  Italian and Portuguese have rule packs and lexicons. Detection also recognises Dutch, and for
+  anything outside the supported six the rules and sentiment switch themselves off — you get a
+  clean transcript and no invented insight. Adding a language means adding a lexicon and a rule
   pack to `lexiflow/nlp/multilingual.py`; nothing else changes.
-- **The sentiment lexicons for es/fr/de are compact.** Roughly fifty hand-picked terms each,
+- **The non-English sentiment lexicons are compact.** Roughly fifty hand-picked terms each,
   against a few thousand for English via vaderSentiment. They get the polarity right on clear
   statements and will miss subtler wording.
 - **Speaker attribution is still unsupervised.** Distinct voices separate cleanly and mid-segment
@@ -204,9 +212,9 @@ What is still true, stated plainly:
 
 ## Roadmap
 
-- A `textual` terminal dashboard alongside the Streamlit one
-- Per-word subtitle cues, now that word timings are already carried through
-- More language packs, starting with Italian and Portuguese
+- Real-time translation between the supported languages, still fully local
+- Word-level speaker attribution rather than per segment
+- A small on-device model for genuinely abstractive summaries, kept optional
 
 ## License
 
