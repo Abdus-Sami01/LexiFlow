@@ -116,8 +116,9 @@ def test_pipeline_threads_move_audio_to_insight(config):
     pipeline = LexiFlowPipeline(config, backend=backend)
     pipeline.start(open_microphone=False)
 
-    rng = np.random.default_rng(7)
-    pipeline.feed(rng.normal(0, 0.3, 16_000).astype(np.float32))
+    times = np.arange(16_000) / 16_000
+    voiced = sum(np.sin(2 * np.pi * 150 * k * times) / k for k in range(1, 12))
+    pipeline.feed((voiced * 0.3).astype(np.float32))
     pipeline.feed(np.zeros(16_000, dtype=np.float32))
 
     deadline = time.time() + 5.0

@@ -36,19 +36,42 @@ def _clock(seconds: float, separator: str) -> str:
     return f"{hours:02d}:{minutes:02d}:{whole:02d}{separator}{milliseconds:03d}"
 
 
-def to_cues(items: Sequence[Any], origin: Optional[float] = None) -> List[Cue]:
+def _row_spans(row: Any) -> List[Dict[str, Any]]:
+    """Prefer the backend's own timings, falling back to the segment boundary."""
+    spans = [
+        span
+        for span in (getattr(row, "spans", None) or [])
+        if (span.get("text") or "").strip() and span.get("end", 0) > span.get("start", 0)
+    ]
+    if spans:
+        return spans
+    return [{"start": row.started_at, "end": row.ended_at, "text": row.text}]
+
+
+def to_cues(
+    items: Sequence[Any], origin: Optional[float] = None, use_spans: bool = True
+) -> List[Cue]:
     """Normalise transcript rows into monotonic, non-overlapping subtitle cues."""
     rows = [item for item in items if getattr(item, "text", "").strip()]
     if not rows:
         return []
 
     base = origin if origin is not None else min(row.started_at for row in rows)
+    units: List[Dict[str, Any]] = []
+    for row in rows:
+        speaker = getattr(row, "speaker", None)
+        pieces = _row_spans(row) if use_spans else [
+            {"start": row.started_at, "end": row.ended_at, "text": row.text}
+        ]
+        for piece in pieces:
+            units.append({**piece, "speaker": speaker})
+
     cues: List[Cue] = []
     previous_end = 0.0
 
-    for position, row in enumerate(rows, start=1):
-        start = max(0.0, row.started_at - base)
-        end = max(start, row.ended_at - base)
+    for position, unit in enumerate(units, start=1):
+        start = max(0.0, unit["start"] - base)
+        end = max(start, unit["end"] - base)
         if end - start < SUBTITLE_MIN_SECONDS:
             end = start + SUBTITLE_MIN_SECONDS
         if start < previous_end:
@@ -60,8 +83,8 @@ def to_cues(items: Sequence[Any], origin: Optional[float] = None) -> List[Cue]:
                 index=position,
                 start=start,
                 end=end,
-                text=" ".join(row.text.split()),
-                speaker=getattr(row, "speaker", None),
+                text=" ".join(str(unit["text"]).split()),
+                speaker=unit.get("speaker"),
             )
         )
     return cues

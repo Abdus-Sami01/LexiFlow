@@ -10,10 +10,10 @@ from typing import Any, Callable, Iterator, List, Optional
 
 import numpy as np
 
-from ..config import AudioConfig, SegmenterConfig
+from ..config import AudioConfig, DiarizationConfig, SegmenterConfig
 from .conversion import prepare_for_whisper, rms
 from .ring_buffer import AudioRingBuffer
-from .segmenter import SpeechSegment, SpeechSegmenter
+from .segmenter import SpeechSegment, SpeechSegmenter, split_on_speaker_change
 
 
 class AudioBackendUnavailable(RuntimeError):
@@ -205,12 +205,17 @@ class SegmentProducer(threading.Thread):
         output: "queue.Queue[Optional[SpeechSegment]]",
         segmenter_config: Optional[SegmenterConfig] = None,
         name: str = "lexiflow-producer",
+        diarization: Optional[DiarizationConfig] = None,
+        partial_gate: Optional[Callable[[], bool]] = None,
     ) -> None:
         super().__init__(name=name, daemon=True)
         self.stream = stream
         self.output = output
         self.segmenter_config = segmenter_config
+        self.diarization = diarization
+        self.partial_gate = partial_gate
         self.dropped_partials = 0
+        self.speaker_splits = 0
         self.error: Optional[BaseException] = None
         self._stop_event = threading.Event()
 
@@ -220,7 +225,11 @@ class SegmentProducer(threading.Thread):
                 if self._stop_event.is_set():
                     break
                 if segment.is_final:
-                    self.output.put(segment)
+                    for part in self._maybe_split(segment):
+                        self.output.put(part)
+                    continue
+                if self.partial_gate is not None and not self.partial_gate():
+                    self.dropped_partials += 1
                     continue
                 try:
                     if self.output.qsize() == 0:
@@ -233,6 +242,18 @@ class SegmentProducer(threading.Thread):
             self.error = exc
         finally:
             self.output.put(None)
+
+    def _maybe_split(self, segment: SpeechSegment) -> List[SpeechSegment]:
+        if self.diarization is None or not self.diarization.split_on_change:
+            return [segment]
+        parts = split_on_speaker_change(
+            segment,
+            threshold=self.diarization.change_threshold,
+            window_seconds=self.diarization.change_window_seconds,
+        )
+        if len(parts) > 1:
+            self.speaker_splits += 1
+        return parts
 
     def stop(self) -> None:
         self._stop_event.set()

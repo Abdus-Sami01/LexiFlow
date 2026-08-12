@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -99,6 +101,45 @@ def voice_embedding(audio: np.ndarray, sample_rate: int = 16_000) -> Optional[np
     return (embedding / norm).astype(np.float32)
 
 
+def change_score(
+    audio: np.ndarray, sample_rate: int = 16_000, window_seconds: float = 0.8
+) -> float:
+    """Cosine distance between the opening and closing window of one segment."""
+    window = int(window_seconds * sample_rate)
+    if audio.size < window * 2:
+        return 0.0
+    head = voice_embedding(audio[:window], sample_rate)
+    tail = voice_embedding(audio[-window:], sample_rate)
+    if head is None or tail is None:
+        return 0.0
+    return float(max(0.0, 1.0 - float(np.dot(head, tail))))
+
+
+def find_change_point(
+    audio: np.ndarray,
+    sample_rate: int = 16_000,
+    window_seconds: float = 0.8,
+    hop_seconds: float = 0.2,
+    threshold: float = 0.35,
+) -> Optional[int]:
+    """Locate the sample index where the voice most clearly changes, if it does."""
+    window = int(window_seconds * sample_rate)
+    hop = max(1, int(hop_seconds * sample_rate))
+    if audio.size < window * 2:
+        return None
+
+    best_index, best_distance = None, threshold
+    for centre in range(window, audio.size - window + 1, hop):
+        left = voice_embedding(audio[centre - window : centre], sample_rate)
+        right = voice_embedding(audio[centre : centre + window], sample_rate)
+        if left is None or right is None:
+            continue
+        distance = 1.0 - float(np.dot(left, right))
+        if distance > best_distance:
+            best_index, best_distance = centre, distance
+    return best_index
+
+
 @dataclass
 class SpeakerProfile:
     label: str
@@ -158,6 +199,61 @@ class SpeakerTracker:
         with self._lock:
             self._profiles.clear()
             self._counter = 0
+
+    def rename(self, label: str, name: str) -> bool:
+        """Give a cluster a real name; enrolment is just a rename that gets saved."""
+        with self._lock:
+            profile = self._profiles.pop(label, None)
+            if profile is None:
+                return False
+            profile.label = name
+            self._profiles[name] = profile
+            return True
+
+    def save(self, path: Path) -> Path:
+        """Persist centroids so the same voices keep their names next session."""
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            payload = {
+                "version": 1,
+                "profiles": [
+                    {
+                        "label": profile.label,
+                        "centroid": [float(value) for value in profile.centroid],
+                        "segments": profile.segments,
+                        "total_seconds": profile.total_seconds,
+                    }
+                    for profile in self._profiles.values()
+                ],
+            }
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        return target
+
+    def load(self, path: Path) -> int:
+        target = Path(path)
+        if not target.is_file():
+            return 0
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return 0
+        restored = 0
+        with self._lock:
+            for entry in payload.get("profiles", []):
+                centroid = np.asarray(entry.get("centroid") or [], dtype=np.float32)
+                if centroid.size == 0:
+                    continue
+                label = entry.get("label") or f"Speaker {restored + 1}"
+                self._profiles[label] = SpeakerProfile(
+                    label=label,
+                    centroid=centroid,
+                    segments=int(entry.get("segments") or 1),
+                    total_seconds=float(entry.get("total_seconds") or 0.0),
+                )
+                restored += 1
+            self._counter = max(self._counter, restored)
+        return restored
 
     def assign(
         self, audio: np.ndarray, sample_rate: int = 16_000, timestamp: float = 0.0

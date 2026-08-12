@@ -156,3 +156,56 @@ def test_store_round_trips_actions_for_export(tmp_path):
     assert store.session_info(store.session_id)["name"] == store.session_name
     assert store.session_info("nope")["id"] == "nope"
     store.close()
+
+
+class SpannedRow:
+    def __init__(self, text, started_at, ended_at, spans, speaker=None):
+        self.text = text
+        self.started_at = started_at
+        self.ended_at = ended_at
+        self.spans = spans
+        self.speaker = speaker
+
+
+def test_cues_use_backend_spans_when_present():
+    row = SpannedRow(
+        "one two",
+        100.0,
+        110.0,
+        [
+            {"start": 100.5, "end": 102.0, "text": "one"},
+            {"start": 103.0, "end": 105.5, "text": "two"},
+        ],
+    )
+    cues = export.to_cues([row])
+    assert len(cues) == 2
+    assert cues[0].start == pytest.approx(0.5)
+    assert cues[0].end == pytest.approx(2.0)
+    assert cues[1].start == pytest.approx(3.0)
+    assert cues[1].end == pytest.approx(5.5)
+    assert cues[1].text == "two"
+
+
+def test_cues_fall_back_to_segment_bounds_without_spans():
+    row = SpannedRow("only", 100.0, 103.0, [])
+    cues = export.to_cues([row])
+    assert len(cues) == 1
+    assert cues[0].end == pytest.approx(3.0)
+
+
+def test_cues_ignore_degenerate_spans():
+    row = SpannedRow("x", 10.0, 12.0, [{"start": 5.0, "end": 5.0, "text": "x"}])
+    assert len(export.to_cues([row])) == 1
+
+
+def test_spans_can_be_disabled():
+    row = SpannedRow(
+        "one two",
+        100.0,
+        110.0,
+        [
+            {"start": 100.5, "end": 102.0, "text": "one"},
+            {"start": 103.0, "end": 105.5, "text": "two"},
+        ],
+    )
+    assert len(export.to_cues([row], use_spans=False)) == 1

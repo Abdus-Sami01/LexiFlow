@@ -123,8 +123,23 @@ class LexiconSentimentAnalyzer:
 
     engine = "lexiflow-lexicon"
 
-    def __init__(self, lexicon: Optional[Dict[str, float]] = None) -> None:
-        self.lexicon = dict(BASE_LEXICON)
+    def __init__(
+        self, lexicon: Optional[Dict[str, float]] = None, language: str = "en"
+    ) -> None:
+        self.language = language
+        self.lexicon = dict(BASE_LEXICON) if language == "en" else {}
+        self.negations = set(NEGATIONS)
+        self.boosters = dict(BOOSTERS)
+
+        if language != "en":
+            from .multilingual import BOOSTERS as EXTRA_BOOSTERS
+            from .multilingual import NEGATIONS as EXTRA_NEGATIONS
+            from .multilingual import lexicon_for
+
+            self.lexicon.update(lexicon_for(language))
+            self.negations = set(EXTRA_NEGATIONS.get(language, NEGATIONS))
+            self.boosters = dict(EXTRA_BOOSTERS.get(language, BOOSTERS))
+
         if lexicon:
             self.lexicon.update(lexicon)
 
@@ -179,7 +194,7 @@ class LexiconSentimentAnalyzer:
             index = position - distance
             if index < 0:
                 break
-            boost = BOOSTERS.get(tokens[index])
+            boost = self.boosters.get(tokens[index])
             if not boost:
                 continue
             scaled = boost * (1.0 - 0.05 * (distance - 1) * 3)
@@ -188,7 +203,7 @@ class LexiconSentimentAnalyzer:
 
     def _negation_factor(self, tokens: List[str], position: int) -> float:
         window = tokens[max(0, position - 3) : position]
-        return NEGATION_SCALE if any(token in NEGATIONS for token in window) else 1.0
+        return NEGATION_SCALE if any(token in self.negations for token in window) else 1.0
 
     def _apply_contrast(self, tokens: List[str], valences: List[float]) -> List[float]:
         if "but" not in tokens:
@@ -214,11 +229,15 @@ class LexiconSentimentAnalyzer:
 class SentimentEngine:
     """Public entry point; prefers vaderSentiment, falls back to the local one."""
 
-    def __init__(self, prefer_vader: bool = True, window: int = 12) -> None:
-        self._fallback = LexiconSentimentAnalyzer()
+    def __init__(
+        self, prefer_vader: bool = True, window: int = 12, language: str = "en"
+    ) -> None:
+        self.language = language
+        self._analyzers: Dict[str, LexiconSentimentAnalyzer] = {}
+        self._fallback = self._analyzer_for(language)
         self._vader = None
         self.engine_name = self._fallback.engine
-        if prefer_vader:
+        if prefer_vader and language == "en":
             try:
                 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -228,7 +247,19 @@ class SentimentEngine:
                 self._vader = None
         self._history: Deque[float] = deque(maxlen=max(2, window))
 
-    def score(self, text: str) -> SentimentScore:
+    def _analyzer_for(self, language: str) -> LexiconSentimentAnalyzer:
+        if language not in self._analyzers:
+            self._analyzers[language] = LexiconSentimentAnalyzer(language=language)
+        return self._analyzers[language]
+
+    def score(self, text: str, language: Optional[str] = None) -> SentimentScore:
+        if language and language != self.language:
+            self.language = language
+            self._fallback = self._analyzer_for(language)
+            if language != "en":
+                self._vader = None
+                self.engine_name = f"lexiflow-lexicon:{language}"
+
         if self._vader is not None:
             raw = self._vader.polarity_scores(text or "")
             result = SentimentScore(

@@ -72,10 +72,15 @@ def test_prepare_for_whisper_from_bytes():
     assert abs(prepared.size - 500) <= 1
 
 
-def _speech(seconds, rate=16_000, amplitude=0.3):
-    samples = int(rate * seconds)
-    noise = np.random.default_rng(1).normal(0, amplitude, samples)
-    return noise.astype(np.float32)
+def _speech(seconds, rate=16_000, amplitude=0.3, fundamental=150.0):
+    times = np.arange(int(rate * seconds)) / rate
+    harmonics = sum(np.sin(2 * np.pi * fundamental * k * times) / k for k in range(1, 12))
+    jitter = np.random.default_rng(1).normal(0, 0.005, times.size)
+    return ((harmonics * amplitude) + jitter).astype(np.float32)
+
+
+def _noise(seconds, rate=16_000, amplitude=0.3):
+    return np.random.default_rng(2).normal(0, amplitude, int(rate * seconds)).astype(np.float32)
 
 
 def test_segmenter_emits_on_silence():
@@ -100,6 +105,50 @@ def test_segmenter_ignores_pure_silence():
     segmenter = SpeechSegmenter()
     assert list(segmenter.push(np.zeros(16_000, dtype=np.float32))) == []
     assert segmenter.flush() is None
+
+
+def test_spectral_gate_accepts_voiced_audio():
+    from lexiflow.audio.conversion import looks_like_speech, spectral_profile
+
+    frame = _speech(0.03)
+    profile = spectral_profile(frame)
+    assert profile["band_ratio"] > 0.3
+    assert profile["flatness"] < 0.3
+    assert looks_like_speech(frame) is True
+
+
+def test_spectral_gate_rejects_broadband_noise():
+    from lexiflow.audio.conversion import looks_like_speech, spectral_profile
+
+    frame = _noise(0.03)
+    profile = spectral_profile(frame)
+    assert profile["flatness"] > 0.3
+    assert profile["zero_crossing_rate"] > 0.35
+    assert looks_like_speech(frame) is False
+
+
+def test_spectral_gate_rejects_low_rumble():
+    from lexiflow.audio.conversion import looks_like_speech
+
+    rumble = np.cumsum(np.random.default_rng(1).normal(0, 0.02, 16_000)).astype(np.float32)
+    assert looks_like_speech(rumble[:480]) is False
+
+
+def test_segmenter_ignores_loud_noise():
+    config = SegmenterConfig(min_segment_seconds=0.3, silence_hangover_seconds=0.2)
+    segmenter = SpeechSegmenter(config)
+    assert list(segmenter.push(_noise(3.0))) == []
+    assert segmenter.flush() is None
+
+
+def test_segmenter_gate_can_be_disabled():
+    config = SegmenterConfig(
+        min_segment_seconds=0.3, silence_hangover_seconds=0.2, spectral_gate=False
+    )
+    segmenter = SpeechSegmenter(config)
+    segments = list(segmenter.push(_noise(2.0)))
+    segments += list(segmenter.push(np.zeros(16_000, dtype=np.float32)))
+    assert segments
 
 
 def test_rms_of_silence_is_zero():

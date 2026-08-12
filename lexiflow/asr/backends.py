@@ -220,11 +220,22 @@ class FasterWhisperBackend(WhisperBackend):
             language=None if self.config.language == "auto" else self.config.language,
             beam_size=self.config.beam_size,
             vad_filter=False,
+            word_timestamps=self.config.word_timestamps,
         )
-        segments = [
-            {"start": item.start, "end": item.end, "text": item.text.strip()}
-            for item in raw_segments
-        ]
+        segments = []
+        for item in raw_segments:
+            words = [
+                {"start": word.start, "end": word.end, "text": word.word.strip()}
+                for word in (getattr(item, "words", None) or [])
+            ]
+            segments.append(
+                {
+                    "start": item.start,
+                    "end": item.end,
+                    "text": item.text.strip(),
+                    "words": words,
+                }
+            )
         elapsed = time.perf_counter() - started
         return TranscriptionResult(
             text=" ".join(part["text"] for part in segments).strip(),

@@ -61,6 +61,7 @@ class AnalyticsConsumer(threading.Thread):
             inference_seconds=utterance.inference_seconds,
             speaker=utterance.speaker,
             speaker_confidence=utterance.speaker_confidence,
+            spans=utterance.spans,
         )
         self.store.update_metrics(
             asr_realtime_factor=round(utterance.realtime_factor, 3),

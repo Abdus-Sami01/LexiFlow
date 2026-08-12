@@ -32,7 +32,9 @@ class PipelineHealth:
     analytics_average_ms: float
     partials_out: int
     dropped_partials: int
+    speaker_splits: int
     speakers: int
+    keeping_up: bool
     errors: List[str]
 
 
@@ -85,12 +87,19 @@ class LexiFlowPipeline:
             return self
 
         self.transcription.ensure_loaded()
+        self._load_speaker_profiles()
         if open_microphone:
             self.stream.start()
         else:
             self.stream.start_virtual()
 
-        self._producer = SegmentProducer(self.stream, self._segment_queue, self.config.segmenter)
+        self._producer = SegmentProducer(
+            self.stream,
+            self._segment_queue,
+            self.config.segmenter,
+            diarization=self.config.diarization,
+            partial_gate=self._partial_gate,
+        )
         self._asr_consumer = TranscriptionConsumer(
             self.transcription, self._segment_queue, self._utterance_queue
         )
@@ -108,6 +117,39 @@ class LexiFlowPipeline:
             analytics_backends=self.analytics.backends,
         )
         return self
+
+    def _load_speaker_profiles(self) -> int:
+        path = self.config.diarization.profile_path
+        if path is None or self.transcription.speakers is None:
+            return 0
+        return self.transcription.speakers.load(path)
+
+    def _save_speaker_profiles(self) -> None:
+        path = self.config.diarization.profile_path
+        if path is None or self.transcription.speakers is None:
+            return
+        try:
+            self.transcription.speakers.save(path)
+        except OSError:
+            pass
+
+    def rename_speaker(self, label: str, name: str) -> bool:
+        """Enrol a cluster under a real name and keep it for the next session."""
+        tracker = self.transcription.speakers
+        if tracker is None or not tracker.rename(label, name):
+            return False
+        self.store.rename_speaker(label, name)
+        self._save_speaker_profiles()
+        return True
+
+    def _partial_gate(self) -> bool:
+        """Stop paying for partials as soon as inference stops keeping up."""
+        if not self.config.segmenter.emit_partials:
+            return False
+        stats = self.transcription.stats
+        if stats.audio_seconds <= 0.0:
+            return True
+        return stats.realtime_factor <= self.config.asr.max_realtime_factor
 
     def feed(self, samples: np.ndarray, source_rate: Optional[int] = None) -> int:
         """Push audio in from a file, a socket or a test, bypassing the mic."""
@@ -131,6 +173,7 @@ class LexiFlowPipeline:
         if self._analytics_consumer is not None:
             self._analytics_consumer.join(timeout=timeout)
 
+        self._save_speaker_profiles()
         self.store.update_metrics(stopped_at=time.time())
 
     def close(self) -> None:
@@ -176,6 +219,9 @@ class LexiFlowPipeline:
             analytics_average_ms=round(self.analytics.stats.average_ms, 3),
             partials_out=self.transcription.stats.partials_out,
             dropped_partials=self._producer.dropped_partials if self._producer else 0,
+            speaker_splits=self._producer.speaker_splits if self._producer else 0,
+            keeping_up=self.transcription.stats.realtime_factor
+            <= self.config.asr.max_realtime_factor,
             speakers=self.transcription.speakers.speaker_count
             if self.transcription.speakers
             else 0,

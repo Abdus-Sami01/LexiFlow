@@ -87,7 +87,12 @@ def _metrics_row(snapshot: Dict[str, Any]) -> None:
     columns = st.columns(6)
     columns[0].metric("utterances", metrics.get("utterances", 0))
     columns[1].metric("open actions", metrics.get("open_actions", 0))
-    columns[2].metric("speakers", metrics.get("speakers", 0))
+    columns[2].metric(
+        "speakers",
+        metrics.get("speakers", 0),
+        delta=None if health.get("keeping_up", True) else "falling behind",
+        delta_color="inverse",
+    )
     columns[3].metric("audio captured", f"{health['captured_seconds']:.0f}s")
     columns[4].metric("asr rtf", f"{health['asr_realtime_factor']:.2f}x")
     columns[5].metric("nlp latency", f"{health['analytics_average_ms']:.1f} ms")
@@ -147,7 +152,7 @@ def _sentiment_panel(snapshot: Dict[str, Any]) -> None:
     )
 
 
-def _speaker_panel(snapshot: Dict[str, Any]) -> None:
+def _speaker_panel(snapshot: Dict[str, Any], pipeline: LexiFlowPipeline) -> None:
     speakers = snapshot.get("speakers") or []
     if not speakers:
         return
@@ -158,6 +163,14 @@ def _speaker_panel(snapshot: Dict[str, Any]) -> None:
             text=f"{row['label']} · {row['share'] * 100:.0f}% · {row['lines']} lines "
             f"· sentiment {row['average_sentiment']:+.2f}",
         )
+    with st.expander("name a speaker"):
+        labels = [row["label"] for row in speakers]
+        chosen = st.selectbox("cluster", labels, key="rename-target")
+        name = st.text_input("real name", key="rename-value")
+        if st.button("save name", key="rename-apply") and name.strip():
+            if pipeline.rename_speaker(chosen, name.strip()):
+                st.success(f"{chosen} is now {name.strip()}")
+                st.rerun()
 
 
 def _topic_panel(snapshot: Dict[str, Any]) -> None:
@@ -235,7 +248,7 @@ def main() -> None:
         _transcript_panel(snapshot, query)
     with right:
         _sentiment_panel(snapshot)
-        _speaker_panel(snapshot)
+        _speaker_panel(snapshot, pipeline)
         _topic_panel(snapshot)
         _entity_panel(snapshot)
 

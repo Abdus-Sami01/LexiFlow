@@ -90,6 +90,7 @@ class TranscriptItem:
     speaker_confidence: float = 0.0
     entities: List[Dict[str, Any]] = field(default_factory=list)
     extractions: List[Dict[str, Any]] = field(default_factory=list)
+    spans: List[Dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -106,6 +107,7 @@ class TranscriptItem:
             "speaker_confidence": self.speaker_confidence,
             "entities": list(self.entities),
             "extractions": list(self.extractions),
+            "spans": list(self.spans),
         }
 
 
@@ -230,6 +232,7 @@ class SessionStore:
                 label=sentiment.label if sentiment else "neutral",
                 speaker=kwargs.get("speaker"),
                 speaker_confidence=float(kwargs.get("speaker_confidence", 0.0)),
+                spans=list(kwargs.get("spans") or []),
                 entities=[entity.as_dict() for entity in (insight.entities if insight else [])],
                 extractions=[
                     extraction.as_dict() for extraction in (insight.extractions if insight else [])
@@ -544,6 +547,30 @@ class SessionStore:
         except sqlite3.Error:
             return []
         return [dict(row) for row in rows]
+
+    def rename_speaker(self, label: str, name: str) -> int:
+        """Relabel every utterance already attributed to a cluster."""
+        touched = 0
+        with self._lock:
+            for item in self._transcript:
+                if item.speaker == label:
+                    item.speaker = name
+                    touched += 1
+            if label in self._speakers:
+                self._speakers[name] = self._speakers.pop(label)
+
+        if self.config.persist:
+            try:
+                connection = self._connection()
+                with connection:
+                    connection.execute(
+                        "UPDATE transcript SET speaker=? WHERE session_id=? AND speaker=?",
+                        (name, self.session_id, label),
+                    )
+            except sqlite3.Error:
+                pass
+        self._emit("speaker", {"from": label, "to": name, "lines": touched})
+        return touched
 
     def load_actions(self, session_id: str) -> List[Dict[str, Any]]:
         """Read a previous session's extracted items back out of SQLite."""

@@ -76,6 +76,53 @@ def prepare_for_whisper(
     return resample_linear(mono, source_rate, target_rate)
 
 
+SPEECH_BAND_HZ = (150.0, 3800.0)
+
+
+def spectral_profile(samples: np.ndarray, sample_rate: int = WHISPER_SAMPLE_RATE) -> dict:
+    """Cheap descriptors that separate voiced speech from steady broadband noise."""
+    frame = np.asarray(samples, dtype=np.float64).reshape(-1)
+    if frame.size < 64:
+        return {"band_ratio": 0.0, "flatness": 1.0, "zero_crossing_rate": 0.0}
+
+    windowed = frame * np.hanning(frame.size)
+    spectrum = np.abs(np.fft.rfft(windowed))
+    power = np.square(spectrum) + 1e-12
+    freqs = np.fft.rfftfreq(frame.size, d=1.0 / sample_rate)
+
+    total = float(power.sum())
+    in_band = (freqs >= SPEECH_BAND_HZ[0]) & (freqs <= SPEECH_BAND_HZ[1])
+    band_ratio = float(power[in_band].sum() / total) if total > 0 else 0.0
+
+    geometric = float(np.exp(np.mean(np.log(power))))
+    arithmetic = float(np.mean(power))
+    flatness = geometric / arithmetic if arithmetic > 0 else 1.0
+
+    signs = np.signbit(frame)
+    crossings = int(np.count_nonzero(signs[1:] != signs[:-1]))
+    return {
+        "band_ratio": band_ratio,
+        "flatness": float(min(1.0, flatness)),
+        "zero_crossing_rate": crossings / max(1, frame.size - 1),
+    }
+
+
+def looks_like_speech(
+    samples: np.ndarray,
+    sample_rate: int = WHISPER_SAMPLE_RATE,
+    min_band_ratio: float = 0.30,
+    max_flatness: float = 0.30,
+    max_zero_crossing_rate: float = 0.35,
+) -> bool:
+    """Voiced speech concentrates energy in a few harmonics inside the voice band."""
+    profile = spectral_profile(samples, sample_rate)
+    return (
+        profile["band_ratio"] >= min_band_ratio
+        and profile["flatness"] <= max_flatness
+        and profile["zero_crossing_rate"] <= max_zero_crossing_rate
+    )
+
+
 def rms(samples: np.ndarray) -> float:
     array = np.asarray(samples, dtype=np.float32).reshape(-1)
     if array.size == 0:

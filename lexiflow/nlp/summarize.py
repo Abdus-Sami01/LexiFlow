@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence
 
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
-WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z'\-]+")
+WORD_PATTERN = re.compile(r"[^\W\d_][^\W\d_'\-]+", re.UNICODE)
+PHRASE_SPLIT = re.compile(r"[^^\w'\-]+|[\d_]+", re.UNICODE)
 
 STOPWORDS = frozenset(
     """
@@ -30,12 +31,47 @@ STOPWORDS = frozenset(
 
 FILLER_TOKENS = frozenset({"um", "uh", "erm", "hmm", "mm", "ah", "eh", "like", "yeah", "okay"})
 
+FILLER_PHRASES = re.compile(
+    r"\b(?:you know|i mean|sort of|kind of|like i said|to be honest|basically|actually|"
+    r"literally|obviously|at the end of the day|if that makes sense|or something|right\?)\b",
+    re.IGNORECASE,
+)
+LEADING_FILLER = re.compile(r"^(?:so|well|okay|ok|right|yeah|um|uh|and|but|anyway)[,\s]+", re.I)
+DOUBLE_SPACE = re.compile(r"\s{2,}")
 
-def tokenize(text: str, drop_stopwords: bool = True) -> List[str]:
+
+ORPHAN_PUNCTUATION = re.compile(r"\s*,(?:\s*,)+|\s+([,.;!?])")
+
+
+def compress(sentence: str) -> str:
+    """Strip verbal filler without inventing words the speaker never said."""
+    trimmed = FILLER_PHRASES.sub("", sentence or "")
+    while True:
+        stripped = LEADING_FILLER.sub("", trimmed, count=1)
+        if stripped == trimmed:
+            break
+        trimmed = stripped
+    trimmed = ORPHAN_PUNCTUATION.sub(lambda match: match.group(1) or ",", trimmed)
+    trimmed = DOUBLE_SPACE.sub(" ", trimmed).strip(" ,;-")
+    if not trimmed:
+        return (sentence or "").strip()
+    return trimmed[0].upper() + trimmed[1:] if trimmed[0].islower() else trimmed
+
+
+def stopwords_for(language: str = "en") -> frozenset:
+    if language == "en":
+        return STOPWORDS
+    from .multilingual import STOPWORDS as EXTRA
+
+    return frozenset(STOPWORDS | EXTRA.get(language, frozenset()))
+
+
+def tokenize(text: str, drop_stopwords: bool = True, language: str = "en") -> List[str]:
     tokens = [match.group(0).lower() for match in WORD_PATTERN.finditer(text or "")]
     if not drop_stopwords:
         return tokens
-    return [token for token in tokens if token not in STOPWORDS and len(token) > 2]
+    blocked = stopwords_for(language)
+    return [token for token in tokens if token not in blocked and len(token) > 2]
 
 
 def split_sentences(text: str) -> List[str]:
@@ -86,15 +122,16 @@ class KeyphraseRanker:
         self.max_phrase_words = max_phrase_words
         self.min_word_length = min_word_length
 
-    def candidates(self, text: str) -> List[List[str]]:
+    def candidates(self, text: str, language: str = "en") -> List[List[str]]:
         phrases: List[List[str]] = []
+        blocked = stopwords_for(language)
         for sentence in split_sentences(text):
             current: List[str] = []
-            for token in re.split(r"[^A-Za-z'\-]+", sentence):
+            for token in PHRASE_SPLIT.split(sentence):
                 lowered = token.lower()
                 is_stop = (
                     not lowered
-                    or lowered in STOPWORDS
+                    or lowered in blocked
                     or lowered in FILLER_TOKENS
                     or len(lowered) < self.min_word_length
                 )
@@ -111,8 +148,8 @@ class KeyphraseRanker:
                 phrases.append(current)
         return phrases
 
-    def rank(self, text: str, limit: int = 10) -> List[Keyphrase]:
-        phrases = self.candidates(text)
+    def rank(self, text: str, limit: int = 10, language: str = "en") -> List[Keyphrase]:
+        phrases = self.candidates(text, language)
         if not phrases:
             return []
 
@@ -161,13 +198,13 @@ class TextRankSummarizer:
         denominator = math.log(len(left) + 1) + math.log(len(right) + 1)
         return overlap / denominator if denominator else 0.0
 
-    def rank(self, sentences: Sequence[str]) -> List[SummarySentence]:
+    def rank(self, sentences: Sequence[str], language: str = "en") -> List[SummarySentence]:
         if not sentences:
             return []
         if len(sentences) == 1:
             return [SummarySentence(sentences[0], 1.0, 0)]
 
-        tokenized = [tokenize(sentence) for sentence in sentences]
+        tokenized = [tokenize(sentence, language=language) for sentence in sentences]
         size = len(sentences)
         weights = [[0.0] * size for _ in range(size)]
         for row in range(size):
@@ -201,8 +238,10 @@ class TextRankSummarizer:
         ranked.sort(key=lambda item: -item.score)
         return ranked
 
-    def summarize(self, sentences: Sequence[str], limit: int = 5) -> List[SummarySentence]:
-        chosen = self.rank(sentences)[:limit]
+    def summarize(
+        self, sentences: Sequence[str], limit: int = 5, language: str = "en"
+    ) -> List[SummarySentence]:
+        chosen = self.rank(sentences, language)[:limit]
         chosen.sort(key=lambda item: item.position)
         return chosen
 
@@ -229,8 +268,8 @@ class TopicTracker:
         right_norm = math.sqrt(sum(value * value for value in right.values()))
         return numerator / (left_norm * right_norm)
 
-    def push(self, text: str) -> Optional[TopicShift]:
-        tokens = tokenize(text)
+    def push(self, text: str, language: str = "en") -> Optional[TopicShift]:
+        tokens = tokenize(text, language=language)
         self._lines.append(tokens)
         if len(self._lines) < self.window * 2:
             return None
@@ -299,9 +338,12 @@ class ConversationDigest:
 class DigestBuilder:
     """One call turns a whole session's transcript into a shareable digest."""
 
-    def __init__(self, summary_limit: int = 5, keyphrase_limit: int = 12) -> None:
+    def __init__(
+        self, summary_limit: int = 5, keyphrase_limit: int = 12, compress_summary: bool = True
+    ) -> None:
         self.summary_limit = summary_limit
         self.keyphrase_limit = keyphrase_limit
+        self.compress_summary = compress_summary
         self.summarizer = TextRankSummarizer()
         self.ranker = KeyphraseRanker()
         self.topics = TopicTracker()
@@ -311,6 +353,7 @@ class DigestBuilder:
         lines: Iterable[str],
         audio_seconds: float = 0.0,
         topics: Optional[List[TopicShift]] = None,
+        language: str = "en",
     ) -> ConversationDigest:
         collected = [line.strip() for line in lines if line and line.strip()]
         if not collected:
@@ -322,9 +365,14 @@ class DigestBuilder:
             sentences.extend(split_sentences(line) or [line])
 
         words = tokenize(joined, drop_stopwords=False)
+        chosen = self.summarizer.summarize(sentences, self.summary_limit, language)
+        if self.compress_summary:
+            chosen = [
+                SummarySentence(compress(item.text), item.score, item.position) for item in chosen
+            ]
         return ConversationDigest(
-            summary=self.summarizer.summarize(sentences, self.summary_limit),
-            keyphrases=self.ranker.rank(joined, self.keyphrase_limit),
+            summary=chosen,
+            keyphrases=self.ranker.rank(joined, self.keyphrase_limit, language),
             topics=list(topics or []),
             word_count=len(words),
             unique_words=len(set(words)),

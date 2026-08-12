@@ -113,8 +113,7 @@ def test_segmenter_emits_partials_before_the_pause():
         partial_min_seconds=0.5,
     )
     segmenter = SpeechSegmenter(settings)
-    noise = np.random.default_rng(2).normal(0, 0.3, SAMPLE_RATE * 3).astype(np.float32)
-    segments = list(segmenter.push(noise))
+    segments = list(segmenter.push(synthetic_voice(150, seconds=3.0, seed=2)))
     assert any(not segment.is_final for segment in segments)
     assert all(segment.reason == "partial" for segment in segments if not segment.is_final)
 
@@ -122,8 +121,7 @@ def test_segmenter_emits_partials_before_the_pause():
 def test_segmenter_partials_can_be_disabled():
     settings = SegmenterConfig(max_segment_seconds=20.0, emit_partials=False)
     segmenter = SpeechSegmenter(settings)
-    noise = np.random.default_rng(2).normal(0, 0.3, SAMPLE_RATE * 3).astype(np.float32)
-    assert list(segmenter.push(noise)) == []
+    assert list(segmenter.push(synthetic_voice(150, seconds=3.0, seed=2))) == []
 
 
 def test_tokenize_drops_stopwords():

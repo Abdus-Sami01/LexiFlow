@@ -46,6 +46,10 @@ class SegmenterConfig:
     noise_floor_alpha: float = 0.965
     speech_trigger_ratio: float = 3.2
     absolute_silence_rms: float = 1.5e-3
+    spectral_gate: bool = True
+    min_band_ratio: float = 0.30
+    max_spectral_flatness: float = 0.30
+    max_zero_crossing_rate: float = 0.35
     emit_partials: bool = True
     partial_interval_seconds: float = 2.0
     partial_min_seconds: float = 1.0
@@ -60,6 +64,10 @@ class DiarizationConfig:
     max_speakers: int = 8
     min_seconds: float = 0.6
     adaptation_rate: float = 0.25
+    split_on_change: bool = True
+    change_threshold: float = 0.35
+    change_window_seconds: float = 0.8
+    profile_path: Optional[Path] = None
 
 
 @dataclass
@@ -74,8 +82,10 @@ class ASRConfig:
     threads: int = 0
     beam_size: int = 1
     no_context: bool = True
+    word_timestamps: bool = True
     single_segment: bool = False
     max_queue_size: int = 32
+    max_realtime_factor: float = 0.75
     warmup: bool = True
 
     def resolved_threads(self) -> int:
@@ -93,6 +103,8 @@ class NLPConfig:
     enable_sentiment: bool = True
     enable_rules: bool = True
     enable_topics: bool = True
+    detect_language: bool = True
+    default_language: str = "en"
     sentiment_window: int = 12
     max_queue_size: int = 256
     topic_window: int = 6
@@ -126,6 +138,8 @@ class LexiFlowConfig:
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
         payload["state"]["database_path"] = str(self.state.database_path)
+        if self.diarization.profile_path is not None:
+            payload["diarization"]["profile_path"] = str(self.diarization.profile_path)
         return payload
 
     def to_json(self, indent: int = 2) -> str:
@@ -150,6 +164,8 @@ class LexiFlowConfig:
                 raw.pop(name)
             if klass is StateConfig and "database_path" in raw:
                 raw["database_path"] = Path(raw["database_path"])
+            if klass is DiarizationConfig and raw.get("profile_path"):
+                raw["profile_path"] = Path(raw["profile_path"])
             kwargs[key] = klass(**raw)
         return cls(**kwargs)
 

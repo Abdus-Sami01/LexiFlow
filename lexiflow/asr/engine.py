@@ -6,7 +6,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 from ..audio.segmenter import SpeechSegment
 from ..audio.speaker import SpeakerTracker
@@ -29,6 +29,7 @@ class Utterance:
     is_final: bool = True
     speaker: Optional[str] = None
     speaker_confidence: float = 0.0
+    spans: List[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -112,6 +113,7 @@ class TranscriptionEngine:
 
         speaker, confidence = self._attribute(segment)
         return Utterance(
+            spans=self._absolute_spans(result, segment),
             text=text,
             started_at=segment.started_at,
             ended_at=segment.ended_at,
@@ -125,6 +127,33 @@ class TranscriptionEngine:
             speaker_confidence=confidence,
             metadata={"segment_reason": segment.reason, "peak_rms": segment.peak_rms},
         )
+
+    @staticmethod
+    def _absolute_spans(result: TranscriptionResult, segment: SpeechSegment) -> List[dict]:
+        """Re-anchor the backend's relative timings onto the segment's wall clock."""
+        origin = segment.started_at
+        spans: List[dict] = []
+        for part in result.segments or []:
+            start = float(part.get("start") or 0.0)
+            end = float(part.get("end") or start)
+            words = [
+                {
+                    "start": origin + float(word.get("start") or 0.0),
+                    "end": origin + float(word.get("end") or 0.0),
+                    "text": word.get("text", ""),
+                }
+                for word in (part.get("words") or [])
+                if word.get("text")
+            ]
+            spans.append(
+                {
+                    "start": origin + start,
+                    "end": origin + end,
+                    "text": (part.get("text") or "").strip(),
+                    "words": words,
+                }
+            )
+        return spans
 
     def _attribute(self, segment: SpeechSegment) -> tuple[Optional[str], float]:
         if self.speakers is None or not segment.is_final:

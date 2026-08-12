@@ -10,7 +10,8 @@ from typing import Deque, Iterator, List, Optional
 import numpy as np
 
 from ..config import SegmenterConfig
-from .conversion import rms
+from .conversion import looks_like_speech, rms
+from .speaker import find_change_point
 
 
 @dataclass
@@ -30,6 +31,50 @@ class SpeechSegment:
     @property
     def duration(self) -> float:
         return self.audio.size / float(self.sample_rate) if self.sample_rate else 0.0
+
+
+def split_on_speaker_change(
+    segment: SpeechSegment,
+    threshold: float = 0.35,
+    window_seconds: float = 0.8,
+    min_part_seconds: float = 0.6,
+) -> List[SpeechSegment]:
+    """Cut one segment in two when a different voice takes over partway through."""
+    if segment.duration < (window_seconds * 2 + min_part_seconds):
+        return [segment]
+
+    index = find_change_point(
+        segment.audio, segment.sample_rate, window_seconds=window_seconds, threshold=threshold
+    )
+    if index is None:
+        return [segment]
+
+    rate = float(segment.sample_rate)
+    if index / rate < min_part_seconds or (segment.audio.size - index) / rate < min_part_seconds:
+        return [segment]
+
+    boundary = segment.started_at + index / rate
+    head = SpeechSegment(
+        audio=segment.audio[:index],
+        sample_rate=segment.sample_rate,
+        started_at=segment.started_at,
+        ended_at=boundary,
+        index=segment.index,
+        peak_rms=segment.peak_rms,
+        reason="speaker_change",
+        metadata=dict(segment.metadata),
+    )
+    tail = SpeechSegment(
+        audio=segment.audio[index:],
+        sample_rate=segment.sample_rate,
+        started_at=boundary,
+        ended_at=segment.ended_at,
+        index=segment.index,
+        peak_rms=segment.peak_rms,
+        reason=segment.reason,
+        metadata=dict(segment.metadata),
+    )
+    return [head, tail]
 
 
 class SpeechSegmenter:
@@ -100,7 +145,7 @@ class SpeechSegmenter:
             self.config.absolute_silence_rms,
             self._noise_floor * self.config.speech_trigger_ratio,
         )
-        is_speech = level >= threshold
+        is_speech = level >= threshold and self._spectrally_voiced(frame, level >= threshold)
 
         if not is_speech:
             alpha = self.config.noise_floor_alpha
@@ -155,6 +200,18 @@ class SpeechSegmenter:
             reason="partial",
             is_final=False,
             metadata={"noise_floor": self._noise_floor},
+        )
+
+    def _spectrally_voiced(self, frame: np.ndarray, loud_enough: bool) -> bool:
+        """Second opinion on every loud frame, so a fan or music cannot open a segment."""
+        if not self.config.spectral_gate or not loud_enough:
+            return loud_enough
+        return looks_like_speech(
+            frame,
+            self.sample_rate,
+            min_band_ratio=self.config.min_band_ratio,
+            max_flatness=self.config.max_spectral_flatness,
+            max_zero_crossing_rate=self.config.max_zero_crossing_rate,
         )
 
     def _open_segment(self) -> None:

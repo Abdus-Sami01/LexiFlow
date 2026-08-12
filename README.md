@@ -26,14 +26,20 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   passing the numpy array directly to C++ instead of shelling out to a binary.
 - Extracts action items, deadlines, blockers, decisions, entities and sentiment from each line in
   well under a millisecond, using regex rules, a small spaCy model and a lexicon-based scorer.
+  English, Spanish, French and German each have their own rule pack and valence lexicon; the
+  language is detected per line and the analytics step aside entirely for anything else rather
+  than emitting nonsense.
 - Attributes each utterance to a speaker with online MFCC clustering: a numpy mel-filterbank and
-  DCT frontend feeds cosine-similarity centroids that grow as new voices appear. No pretrained
-  embedding model, no enrolment step.
+  DCT frontend feeds cosine-similarity centroids that grow as new voices appear. When two people
+  speak inside one segment it finds the change point and splits the segment there. Name a cluster
+  once and the voiceprint is saved, so the same person keeps that name in later sessions.
 - Summarises the session on demand with TextRank over a sentence-similarity graph, ranks keyphrases
   with RAKE, and flags topic changes by cosine distance between rolling word windows.
 - Streams partial hypotheses while someone is still talking, so the transcript ticker updates
-  mid-sentence instead of waiting for the pause. Partials are dropped automatically whenever the
-  inference queue is busy, so they can never delay a final result.
+  mid-sentence instead of waiting for the pause. A governor drops them the moment the measured
+  realtime factor says inference is falling behind, so they can never delay a final result.
+- Gates the segmenter on spectral shape as well as loudness, so a fan, hiss or air conditioning
+  no longer opens a segment the way a plain energy threshold would.
 - Keeps the microphone, inference and analytics on three isolated threads joined by bounded queues,
   so a slow transcription pass can never drop audio.
 - Ships a Streamlit dashboard with a live transcript, action-item checklist, sentiment timeline,
@@ -130,14 +136,17 @@ python -m lexiflow --config my-settings.json run
 ```
 
 The sections are `audio` (sample rates, block size, ring buffer length), `segmenter` (min/max
-segment length, silence hangover, noise floor adaptation, partial interval), `diarization`
-(similarity threshold, speaker cap, adaptation rate), `asr` (backend, model, threads, beam size),
-`nlp` (which analyzers to enable, topic window, summary length) and `state` (database path,
-retention).
+segment length, silence hangover, noise floor adaptation, spectral gate thresholds, partial
+interval), `diarization` (similarity threshold, speaker cap, change-point splitting, saved
+voiceprints), `asr` (backend, model, threads, beam size, word timestamps, realtime-factor
+ceiling), `nlp` (which analyzers to enable, language detection, topic window, summary length) and
+`state` (database path, retention).
 
 Every advanced stage can be switched off independently. `segmenter.emit_partials = false` halves
-CPU use on a slow machine, `diarization.enabled = false` skips the MFCC pass, and
-`nlp.enable_topics = false` drops topic tracking. The rest of the pipeline is unaffected.
+CPU use on a slow machine, `segmenter.spectral_gate = false` returns to plain energy gating,
+`diarization.enabled = false` skips the MFCC pass, `diarization.split_on_change = false` keeps
+segments whole, and `nlp.detect_language = false` pins the analytics to one language. The rest of
+the pipeline is unaffected.
 
 ## Layout
 
@@ -145,7 +154,7 @@ CPU use on a slow machine, `diarization.enabled = false` skips the MFCC pass, an
 | --- | --- | --- |
 | `lexiflow/audio/` | 1 | ring buffer, format conversion, segmenter, capture thread, speaker tracker |
 | `lexiflow/asr/` | 2 | hardware detection, native backends, transcription thread |
-| `lexiflow/nlp/` | 3 | rule engine, entity extractor, sentiment, summarisation, analytics pipeline |
+| `lexiflow/nlp/` | 3 | rules, entities, sentiment, summarisation, language routing, multilingual packs |
 | `lexiflow/state/` | 4 | thread-safe store, SQLite persistence and search, analytics thread |
 | `lexiflow/ui/` | 5 | Streamlit dashboard |
 | `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
@@ -158,40 +167,46 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-84 tests cover the ring buffer, resampling, segmentation and partial emission, every rule family,
-sentiment negation and momentum, the MFCC frontend and speaker clustering, TextRank, RAKE and topic
-drift, subtitle cue timing, every export format, the model catalogue, the store's persistence and
-cross-session search, queue draining against a deliberately slow backend, and full
-audio-to-insight passes through all three threads using a scripted ASR backend.
+125 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+and rumble, partial emission and the realtime-factor governor, every rule family in four
+languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
+frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
+topic drift, filler compression, subtitle cue timing from backend spans, every export format, the
+model catalogue, the store's persistence and cross-session search, queue draining against a
+deliberately slow backend, and full audio-to-insight passes through all three threads.
 
 ## Limitations
 
-Worth knowing before you rely on it:
+What is still true, stated plainly:
 
-- **The analytics layer is English-only.** Whisper itself is multilingual and the multilingual
-  models are in the catalogue, but the rule patterns, the sentiment lexicon and the stopword list
-  are all English. Transcription of other languages works; the insight layer will produce noise.
-- **Speaker attribution is heuristic.** MFCC centroid clustering separates clearly different
-  voices well, but it degrades with similar voices, crosstalk and heavy background noise, and it
-  cannot split two people talking over each other inside one segment. It assigns a label per
-  segment, not per word. Treat the labels as a strong hint, not ground truth.
-- **Segmentation is energy-based, not a neural VAD.** It adapts to a steady noise floor, but
-  sustained non-speech noise (a fan, music, a busy cafe) will trigger segments.
-- **Summarisation is extractive.** TextRank selects the most central sentences that were actually
-  said; it never writes a new one. That keeps it honest and free, but it will not paraphrase.
-- **Partial hypotheses re-transcribe a growing window,** so with partials on, CPU cost per
-  utterance is roughly doubled. Turn them off on a slow machine.
-- **Latency depends entirely on the model you pick.** `base.en` runs comfortably faster than
-  realtime on a modern laptop; `large-v3` does not.
-- **The subtitle timings come from segment boundaries,** not from Whisper's word-level timestamps,
-  so cue edges are approximate to within the silence hangover.
+- **Analytics covers four languages, not every language.** English, Spanish, French and German
+  have rule packs and lexicons. Detection recognises those plus Italian, Portuguese and Dutch, and
+  for anything outside the supported four the rules and sentiment switch themselves off — you get
+  a clean transcript and no invented insight. Adding a language means adding a lexicon and a rule
+  pack to `lexiflow/nlp/multilingual.py`; nothing else changes.
+- **The sentiment lexicons for es/fr/de are compact.** Roughly fifty hand-picked terms each,
+  against a few thousand for English via vaderSentiment. They get the polarity right on clear
+  statements and will miss subtler wording.
+- **Speaker attribution is still unsupervised.** Distinct voices separate cleanly and mid-segment
+  changes are now split, but genuinely simultaneous speech is one waveform and cannot be
+  un-mixed by clustering. Very similar voices can merge into one cluster. Labels are per segment,
+  not per word.
+- **The spectral gate rejects noise, not music.** Fans, hiss and broadband noise are filtered by
+  flatness and zero-crossing rate. Tonal music sits in the same part of the feature space as
+  voiced speech and will still open a segment.
+- **Summarisation is extractive.** TextRank picks the most central sentences actually spoken and
+  strips verbal filler from them; it never writes a sentence nobody said. Genuine abstraction
+  needs a language model, which would break the zero-cloud promise this project is built on.
+- **Latency still depends on the model.** That is arithmetic, not a bug: `base.en` runs faster
+  than realtime on a modern laptop, `large-v3` does not. What is handled is the consequence —
+  the pipeline measures its own realtime factor, sheds partials when it slips, and reports
+  `keeping_up: false` instead of silently building a backlog.
 
 ## Roadmap
 
-- Word-level timestamps from the backends, for exact subtitle alignment
 - A `textual` terminal dashboard alongside the Streamlit one
-- Speaker enrolment, so labels become real names that persist across sessions
-- Language detection that disables the English-only analytics automatically
+- Per-word subtitle cues, now that word timings are already carried through
+- More language packs, starting with Italian and Portuguese
 
 ## License
 
