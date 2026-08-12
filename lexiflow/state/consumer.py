@@ -26,6 +26,7 @@ class AnalyticsConsumer(threading.Thread):
         self.store = store
         self.source = source
         self.error: Optional[BaseException] = None
+        self.busy = False
         self._stop_event = threading.Event()
 
     def run(self) -> None:
@@ -34,7 +35,11 @@ class AnalyticsConsumer(threading.Thread):
                 utterance = self.source.get()
                 if utterance is None:
                     break
-                self._handle(utterance)
+                self.busy = True
+                try:
+                    self._handle(utterance)
+                finally:
+                    self.busy = False
         except BaseException as exc:  # pragma: no cover - defensive
             self.error = exc
 

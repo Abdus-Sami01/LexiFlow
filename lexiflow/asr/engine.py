@@ -152,6 +152,7 @@ class TranscriptionConsumer(threading.Thread):
         self.source = source
         self.sink = sink
         self.error: Optional[BaseException] = None
+        self.busy = False
         self._stop_event = threading.Event()
 
     def run(self) -> None:
@@ -160,11 +161,14 @@ class TranscriptionConsumer(threading.Thread):
                 segment = self.source.get()
                 if segment is None:
                     break
+                self.busy = True
                 try:
                     utterance = self.engine.transcribe_segment(segment)
                 except Exception:
                     self.engine.stats.errors += 1
                     continue
+                finally:
+                    self.busy = False
                 if utterance is not None:
                     self.sink.put(utterance)
         except BaseException as exc:  # pragma: no cover - defensive

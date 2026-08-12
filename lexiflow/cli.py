@@ -155,7 +155,8 @@ def command_replay(args: argparse.Namespace) -> int:
         if args.realtime:
             time.sleep(chunk / float(rate))
 
-    time.sleep(1.0)
+    if not pipeline.drain(timeout=args.drain_timeout):
+        print("warning: pipeline still busy at shutdown", file=sys.stderr)
     pipeline.stop()
     print(json.dumps(pipeline.snapshot(), indent=2, default=str))
     pipeline.store.close()
@@ -307,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--model")
     replay.add_argument("--backend")
     replay.add_argument("--realtime", action="store_true")
+    replay.add_argument("--drain-timeout", type=float, default=120.0)
     replay.set_defaults(handler=command_replay)
 
     demo = subparsers.add_parser("demo", help="run the analytics engine over sample text")

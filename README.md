@@ -59,7 +59,7 @@ python -m lexiflow doctor              # hardware, backends, devices
 python -m lexiflow build               # tuned whisper.cpp build command for this machine
 python -m lexiflow devices             # list input devices
 python -m lexiflow run --model models/ggml-base.en.bin
-python -m lexiflow replay meeting.wav --model models/ggml-base.en.bin
+python -m lexiflow replay meeting.wav --model models/ggml-base.en.bin  # drains before exit
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
 python -m lexiflow bench               # analytics latency
@@ -133,10 +133,10 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-63 tests cover the ring buffer, resampling, segmentation and partial emission, every rule family,
+65 tests cover the ring buffer, resampling, segmentation and partial emission, every rule family,
 sentiment negation and momentum, the MFCC frontend and speaker clustering, TextRank, RAKE and topic
-drift, the store's persistence and cross-session search, and two full audio-to-insight passes
-through all three threads using a scripted ASR backend.
+drift, the store's persistence and cross-session search, queue draining against a deliberately slow
+backend, and full audio-to-insight passes through all three threads using a scripted ASR backend.
 
 ## License
 

@@ -137,14 +137,28 @@ class LexiFlowPipeline:
         self.stop()
         self.store.close()
 
-    def drain(self, timeout: float = 10.0) -> None:
-        """Block until both queues are empty; used by the CLI before shutdown."""
+    def drain(self, timeout: float = 30.0, settle_checks: int = 3) -> bool:
+        """Block until every queued segment has been transcribed and analysed."""
         deadline = time.time() + timeout
+        settled = 0
         while time.time() < deadline:
-            if self._segment_queue.unfinished_tasks == 0 and self._utterance_queue.empty():
-                if self._segment_queue.empty():
-                    return
+            if self._is_idle():
+                settled += 1
+                if settled >= settle_checks:
+                    return True
+            else:
+                settled = 0
             time.sleep(0.05)
+        return self._is_idle()
+
+    def _is_idle(self) -> bool:
+        if not self._segment_queue.empty() or not self._utterance_queue.empty():
+            return False
+        if self._asr_consumer is not None and self._asr_consumer.busy:
+            return False
+        if self._analytics_consumer is not None and self._analytics_consumer.busy:
+            return False
+        return True
 
     def health(self) -> PipelineHealth:
         errors: List[str] = []

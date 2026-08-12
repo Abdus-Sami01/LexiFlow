@@ -300,3 +300,36 @@ def test_diarization_can_be_switched_off(config):
     assert pipeline.transcription.speakers is None
     assert pipeline.health().speakers == 0
     pipeline.close()
+
+
+class SlowBackend(ScriptedBackend):
+    def transcribe(self, audio, sample_rate=SAMPLE_RATE):
+        time.sleep(0.4)
+        return super().transcribe(audio, sample_rate)
+
+
+def test_drain_waits_for_a_slow_backend(config):
+    config.segmenter.emit_partials = False
+    backend = SlowBackend(["first line", "second line", "third line"], config.asr)
+    pipeline = LexiFlowPipeline(config, backend=backend)
+    pipeline.start(open_microphone=False)
+
+    for seed in (21, 22, 23):
+        pipeline.feed(synthetic_voice(130 + seed, seconds=1.0, seed=seed))
+        pipeline.feed(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
+
+    assert pipeline.drain(timeout=20.0) is True
+    assert len(pipeline.store.transcript()) == 3
+    assert pipeline.health().segment_queue == 0
+    pipeline.close()
+
+
+def test_drain_reports_false_when_it_times_out(config):
+    config.segmenter.emit_partials = False
+    pipeline = LexiFlowPipeline(config, backend=SlowBackend(["slow"], config.asr))
+    pipeline.start(open_microphone=False)
+    for seed in (31, 32, 33, 34):
+        pipeline.feed(synthetic_voice(150 + seed, seconds=1.0, seed=seed))
+        pipeline.feed(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
+    assert pipeline.drain(timeout=0.2) is False
+    pipeline.close()
