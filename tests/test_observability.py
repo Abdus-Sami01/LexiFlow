@@ -6,6 +6,7 @@ from lexiflow.asr.backends import ScriptedBackend
 from lexiflow.config import LexiFlowConfig
 from lexiflow.observability import (
     FAILURES,
+    HANDLER_NAME,
     FailureLog,
     configure_logging,
     get_logger,
@@ -84,7 +85,8 @@ def test_logger_is_namespaced_and_not_shouting_by_default():
     assert logger.level == logging.WARNING
     assert configure_logging(verbose=True).level == logging.DEBUG
     assert configure_logging(quiet=True).level == logging.ERROR
-    assert len([h for h in logger.handlers if isinstance(h, logging.StreamHandler)]) == 1
+    ours = [h for h in logger.handlers if h.get_name() == HANDLER_NAME]
+    assert len(ours) == 1
 
 
 def test_a_broken_store_write_is_recorded_not_raised(tmp_path, monkeypatch):

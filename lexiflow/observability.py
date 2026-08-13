@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 LOGGER_NAME = "lexiflow"
+HANDLER_NAME = "lexiflow-stderr"
 DEFAULT_HISTORY = 50
 
 
@@ -112,8 +113,9 @@ def configure_logging(verbose: bool = False, quiet: bool = False) -> logging.Log
     """Attach a single stderr handler; libraries should never own the root logger."""
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.ERROR if quiet else logging.DEBUG if verbose else logging.WARNING)
-    if not any(isinstance(handler, logging.StreamHandler) for handler in logger.handlers):
+    if not any(handler.get_name() == HANDLER_NAME for handler in logger.handlers):
         handler = logging.StreamHandler()
+        handler.set_name(HANDLER_NAME)
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
         logger.addHandler(handler)
     logger.propagate = False
