@@ -128,7 +128,13 @@ def _transcript_panel(snapshot: Dict[str, Any], query: str) -> None:
         st.markdown(
             f"<div style='border-left:3px solid {color};padding:2px 10px;margin:4px 0'>"
             f"<span style='color:#718096;font-size:0.8em'>{stamp}{who} · "
-            f"{item['compound']:+.2f}</span><br>{item['text']}</div>",
+            f"{item['compound']:+.2f}</span><br>{item['text']}"
+            + (
+                f"<br><span style='color:#4a5568;font-style:italic'>{item['translation']}</span>"
+                if item.get("translation")
+                else ""
+            )
+            + "</div>",
             unsafe_allow_html=True,
         )
 

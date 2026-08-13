@@ -114,6 +114,18 @@ class NLPConfig:
 
 
 @dataclass
+class TranslationConfig:
+    """Local translation: Argos for text, Whisper's translate task for speech."""
+
+    enabled: bool = False
+    target_language: str = "en"
+    backend: str = "auto"
+    speech_translation: bool = True
+    analyse_translation: bool = True
+    cache_size: int = 512
+
+
+@dataclass
 class StateConfig:
     """Persistence and in-memory retention for the shared application state."""
 
@@ -133,6 +145,7 @@ class LexiFlowConfig:
     diarization: DiarizationConfig = field(default_factory=DiarizationConfig)
     asr: ASRConfig = field(default_factory=ASRConfig)
     nlp: NLPConfig = field(default_factory=NLPConfig)
+    translation: TranslationConfig = field(default_factory=TranslationConfig)
     state: StateConfig = field(default_factory=StateConfig)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -153,6 +166,7 @@ class LexiFlowConfig:
             "diarization": DiarizationConfig,
             "asr": ASRConfig,
             "nlp": NLPConfig,
+            "translation": TranslationConfig,
             "state": StateConfig,
         }
         kwargs: Dict[str, Any] = {}

@@ -61,8 +61,15 @@ class WhisperBackend:
     def load(self) -> "WhisperBackend":
         raise NotImplementedError
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         raise NotImplementedError
+
+    @property
+    def supports_translation(self) -> bool:
+        """Whisper can translate any supported language into English in one pass."""
+        return False
 
     def unload(self) -> None:
         self._loaded = False
@@ -118,12 +125,18 @@ class PyWhisperCppBackend(WhisperBackend):
         self._loaded = True
         return self
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    @property
+    def supports_translation(self) -> bool:
+        return True
+
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         if not self._loaded:
             self.load()
         array = self._as_float32(audio)
         started = time.perf_counter()
-        raw_segments = self._model.transcribe(array)
+        raw_segments = self._model.transcribe(array, translate=task == "translate")
         elapsed = time.perf_counter() - started
         segments = [
             {
@@ -165,7 +178,9 @@ class WhisperCppPythonBackend(WhisperBackend):
         self._loaded = True
         return self
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         if not self._loaded:
             self.load()
         array = self._as_float32(audio)
@@ -210,7 +225,13 @@ class FasterWhisperBackend(WhisperBackend):
         self._loaded = True
         return self
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    @property
+    def supports_translation(self) -> bool:
+        return True
+
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         if not self._loaded:
             self.load()
         array = self._as_float32(audio)
@@ -220,6 +241,7 @@ class FasterWhisperBackend(WhisperBackend):
             language=None if self.config.language == "auto" else self.config.language,
             beam_size=self.config.beam_size,
             vad_filter=False,
+            task=task,
             word_timestamps=self.config.word_timestamps,
         )
         segments = []
@@ -261,7 +283,9 @@ class NullBackend(WhisperBackend):
         self._loaded = True
         return self
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         array = self._as_float32(audio)
         return TranscriptionResult(
             text="",
@@ -278,9 +302,15 @@ class ScriptedBackend(WhisperBackend):
     name = "scripted"
     priority = 1_000
 
-    def __init__(self, lines: Optional[List[str]] = None, config: Optional[ASRConfig] = None):
+    def __init__(
+        self,
+        lines: Optional[List[str]] = None,
+        config: Optional[ASRConfig] = None,
+        translations: Optional[List[str]] = None,
+    ):
         super().__init__(config)
         self._lines = list(lines or [])
+        self._translations = list(translations or [])
         self._cursor = 0
 
     @classmethod
@@ -291,8 +321,23 @@ class ScriptedBackend(WhisperBackend):
         self._loaded = True
         return self
 
-    def transcribe(self, audio: np.ndarray, sample_rate: int = 16_000) -> TranscriptionResult:
+    @property
+    def supports_translation(self) -> bool:
+        return bool(self._translations)
+
+    def transcribe(
+        self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
+    ) -> TranscriptionResult:
         array = self._as_float32(audio)
+        if task == "translate" and self._translations:
+            text = self._translations[(self._cursor - 1) % len(self._translations)]
+            return TranscriptionResult(
+                text=text,
+                language="en",
+                inference_seconds=0.0,
+                audio_seconds=array.size / float(sample_rate),
+                backend=self.name,
+            )
         text = self._lines[self._cursor % len(self._lines)] if self._lines else ""
         self._cursor += 1
         return TranscriptionResult(

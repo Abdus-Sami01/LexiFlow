@@ -148,6 +148,8 @@ class LexiFlowTUI(App):
             if needle and needle not in item["text"].lower():
                 continue
             log.write(self._format_line(item), width=width)
+            if item.get("translation"):
+                log.write(f"      [italic grey62]{item['translation']}[/]", width=width)
             for extraction in item["extractions"]:
                 if extraction["kind"] in {"action_item", "deadline", "blocker", "decision"}:
                     due = f" (due {extraction['due']})" if extraction["due"] else ""

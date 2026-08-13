@@ -37,6 +37,10 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   DCT frontend feeds cosine-similarity centroids that grow as new voices appear. When two people
   speak inside one segment it finds the change point and splits the segment there. Name a cluster
   once and the voiceprint is saved, so the same person keeps that name in later sessions.
+- Translates locally, two ways: Whisper's own translate task turns any supported language into
+  English straight from the audio, and Argos/OPUS-MT models handle text between any installed
+  pair. When a language has no rule pack, the analytics run on the translation instead of giving
+  up, so a Dutch meeting still yields English action items.
 - Summarises the session on demand with TextRank over a sentence-similarity graph, ranks keyphrases
   with RAKE, and flags topic changes by cosine distance between rolling word windows.
 - Streams partial hypotheses while someone is still talking, so the transcript ticker updates
@@ -55,6 +59,7 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
 ```bash
 pip install -e ".[all]"          # everything
 pip install -e ".[audio,ui]"     # capture + dashboards, bring your own ASR
+pip install -e ".[translate]"    # offline Argos/OPUS-MT translation
 python -m spacy download en_core_web_sm
 ```
 
@@ -81,7 +86,18 @@ python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
 python -m lexiflow export --format srt --format md --output notes
 python -m lexiflow export --format srt --words --output captions
+python -m lexiflow translate pairs           # what can be translated offline right now
+python -m lexiflow translate install es-en   # one download, then never again
+python -m lexiflow translate session         # print a session with translations
+python -m lexiflow translate text "hola mundo"
+python -m lexiflow export --format srt --translated --output subs-en
 ```
+
+Translation is off by default. Turn it on with `translation.enabled = true` and a
+`translation.target_language`. Into English it prefers Whisper's own translate task, which reads
+the audio directly and beats translating our own transcript; for any other target, or when the
+backend cannot translate, it falls back to Argos. Every line is cached, failures degrade to the
+untranslated original, and nothing leaves the machine.
 
 `--model` takes either a catalogue name (`base.en`) or a path to a `.bin`. Names resolve against
 `~/.lexiflow/models`, overridable with `LEXIFLOW_MODELS`; a missing model tells you the exact
@@ -146,8 +162,9 @@ The sections are `audio` (sample rates, block size, ring buffer length), `segmen
 segment length, silence hangover, noise floor adaptation, spectral gate thresholds, partial
 interval), `diarization` (similarity threshold, speaker cap, change-point splitting, saved
 voiceprints), `asr` (backend, model, threads, beam size, word timestamps, realtime-factor
-ceiling), `nlp` (which analyzers to enable, language detection, topic window, summary length) and
-`state` (database path, retention).
+ceiling), `nlp` (which analyzers to enable, language detection, topic window, summary length),
+`translation` (on/off, target language, backend, whether to analyse the translation) and `state`
+(database path, retention).
 
 Every advanced stage can be switched off independently. `segmenter.emit_partials = false` halves
 CPU use on a slow machine, `segmenter.spectral_gate = false` returns to plain energy gating,
@@ -161,7 +178,7 @@ the pipeline is unaffected.
 | --- | --- | --- |
 | `lexiflow/audio/` | 1 | ring buffer, format conversion, segmenter, capture thread, speaker tracker |
 | `lexiflow/asr/` | 2 | hardware detection, native backends, transcription thread |
-| `lexiflow/nlp/` | 3 | rules, entities, sentiment, summarisation, language routing, multilingual packs |
+| `lexiflow/nlp/` | 3 | rules, entities, sentiment, summarisation, language routing, translation |
 | `lexiflow/state/` | 4 | thread-safe store, SQLite persistence and search, analytics thread |
 | `lexiflow/ui/` | 5 | Streamlit dashboard and Textual terminal dashboard |
 | `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
@@ -174,24 +191,32 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-129 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+151 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
 topic drift, filler compression, subtitle cue timing from backend spans, every export format, the
 model catalogue, the store's persistence and cross-session search, queue draining against a
-deliberately slow backend, the terminal dashboard driven headlessly through its key bindings, and
+deliberately slow backend, the terminal dashboard driven headlessly through its key bindings,
+the translation engine's caching, failure handling and fallback to analysing a translation, and
 full audio-to-insight passes through all three threads.
 
 ## Limitations
 
 What is still true, stated plainly:
 
-- **Analytics covers six languages, not every language.** English, Spanish, French, German,
-  Italian and Portuguese have rule packs and lexicons. Detection also recognises Dutch, and for
-  anything outside the supported six the rules and sentiment switch themselves off — you get a
-  clean transcript and no invented insight. Adding a language means adding a lexicon and a rule
-  pack to `lexiflow/nlp/multilingual.py`; nothing else changes.
+- **Analytics covers six languages natively, and the rest through translation.** English,
+  Spanish, French, German, Italian and Portuguese have their own rule packs and lexicons. For
+  anything else, enabling translation lets the analytics run on the English translation instead;
+  with translation off they switch themselves off rather than emit nonsense. Adding a native
+  language means adding a lexicon and a rule pack to `lexiflow/nlp/multilingual.py`.
+- **Translation quality is the model's, not ours.** Whisper's translate task and the OPUS-MT
+  models are solid for meeting speech but will miss idiom and proper nouns, and translating into
+  English costs a second inference pass per utterance. Argos needs its language pair downloaded
+  once before it works offline forever after.
+- **Language detection is sticky by design.** It weighs the last few lines so one odd sentence
+  cannot flip the session, which means a genuine mid-meeting language switch takes a few lines to
+  register.
 - **The non-English sentiment lexicons are compact.** Roughly fifty hand-picked terms each,
   against a few thousand for English via vaderSentiment. They get the polarity right on clear
   statements and will miss subtler wording.
@@ -212,9 +237,9 @@ What is still true, stated plainly:
 
 ## Roadmap
 
-- Real-time translation between the supported languages, still fully local
 - Word-level speaker attribution rather than per segment
 - A small on-device model for genuinely abstractive summaries, kept optional
+- Native rule packs for the languages currently served by translation
 
 ## License
 

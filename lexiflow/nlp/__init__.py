@@ -16,6 +16,13 @@ from .summarize import (
     split_sentences,
     tokenize,
 )
+from .translate import (
+    TranslationEngine,
+    TranslationResult,
+    Translator,
+    available_translators,
+    create_translator,
+)
 
 __all__ = [
     "AnalyticsEngine",
@@ -38,6 +45,11 @@ __all__ = [
     "TextRankSummarizer",
     "TopicShift",
     "TopicTracker",
+    "TranslationEngine",
+    "TranslationResult",
+    "Translator",
+    "available_translators",
+    "create_translator",
     "find_due_date",
     "infer_priority",
     "label_for",

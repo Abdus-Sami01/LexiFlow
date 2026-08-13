@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from ..audio.segmenter import SpeechSegment
 from ..audio.speaker import SpeakerTracker
-from ..config import ASRConfig, DiarizationConfig
+from ..config import ASRConfig, DiarizationConfig, TranslationConfig
 from .backends import TranscriptionResult, WhisperBackend, create_backend
 
 
@@ -30,6 +30,8 @@ class Utterance:
     speaker: Optional[str] = None
     speaker_confidence: float = 0.0
     spans: List[dict] = field(default_factory=list)
+    translation: Optional[str] = None
+    translation_engine: Optional[str] = None
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -46,6 +48,7 @@ class EngineStats:
     partials_out: int = 0
     empty_results: int = 0
     errors: int = 0
+    speech_translations: int = 0
     audio_seconds: float = 0.0
     inference_seconds: float = 0.0
 
@@ -64,10 +67,12 @@ class TranscriptionEngine:
         config: Optional[ASRConfig] = None,
         backend: Optional[WhisperBackend] = None,
         diarization: Optional[DiarizationConfig] = None,
+        translation: Optional[TranslationConfig] = None,
     ) -> None:
         self.config = config or ASRConfig()
         self.backend = backend or create_backend(self.config)
         self.diarization = diarization or DiarizationConfig()
+        self.translation = translation or TranslationConfig()
         self.speakers = (
             SpeakerTracker(
                 similarity_threshold=self.diarization.similarity_threshold,
@@ -112,7 +117,10 @@ class TranscriptionEngine:
             self.stats.partials_out += 1
 
         speaker, confidence = self._attribute(segment)
+        spoken, engine = self._speech_translation(segment, result.language)
         return Utterance(
+            translation=spoken,
+            translation_engine=engine,
             spans=self._absolute_spans(result, segment),
             text=text,
             started_at=segment.started_at,
@@ -127,6 +135,32 @@ class TranscriptionEngine:
             speaker_confidence=confidence,
             metadata={"segment_reason": segment.reason, "peak_rms": segment.peak_rms},
         )
+
+    def _speech_translation(
+        self, segment: SpeechSegment, language: str
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Whisper translates straight from audio, which beats translating our own text."""
+        if not (self.translation.enabled and self.translation.speech_translation):
+            return None, None
+        if self.translation.target_language != "en" or language == "en":
+            return None, None
+        if not segment.is_final or not self.backend.supports_translation:
+            return None, None
+
+        try:
+            with self._lock:
+                translated = self.backend.transcribe(
+                    segment.audio, segment.sample_rate, task="translate"
+                )
+        except Exception:
+            self.stats.errors += 1
+            return None, None
+
+        text = (translated.text or "").strip()
+        if not text:
+            return None, None
+        self.stats.speech_translations += 1
+        return text, f"whisper:{self.backend.name}"
 
     @staticmethod
     def _absolute_spans(result: TranscriptionResult, segment: SpeechSegment) -> List[dict]:

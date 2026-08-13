@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS transcript (
     inference_seconds REAL,
     compound REAL,
     label TEXT,
-    speaker TEXT
+    speaker TEXT,
+    translation TEXT
 );
 CREATE INDEX IF NOT EXISTS transcript_session_idx ON transcript(session_id, seq);
 CREATE TABLE IF NOT EXISTS action_items (
@@ -88,6 +89,8 @@ class TranscriptItem:
     label: str = "neutral"
     speaker: Optional[str] = None
     speaker_confidence: float = 0.0
+    language: str = "en"
+    translation: Optional[str] = None
     entities: List[Dict[str, Any]] = field(default_factory=list)
     extractions: List[Dict[str, Any]] = field(default_factory=list)
     spans: List[Dict[str, Any]] = field(default_factory=list)
@@ -105,6 +108,8 @@ class TranscriptItem:
             "label": self.label,
             "speaker": self.speaker,
             "speaker_confidence": self.speaker_confidence,
+            "language": self.language,
+            "translation": self.translation,
             "entities": list(self.entities),
             "extractions": list(self.extractions),
             "spans": list(self.spans),
@@ -232,6 +237,9 @@ class SessionStore:
                 label=sentiment.label if sentiment else "neutral",
                 speaker=kwargs.get("speaker"),
                 speaker_confidence=float(kwargs.get("speaker_confidence", 0.0)),
+                language=insight.language if insight else "en",
+                translation=(insight.translation if insight else None)
+                or kwargs.get("translation"),
                 spans=list(kwargs.get("spans") or []),
                 entities=[entity.as_dict() for entity in (insight.entities if insight else [])],
                 extractions=[
@@ -287,8 +295,8 @@ class SessionStore:
             with connection:
                 connection.execute(
                     "INSERT INTO transcript(session_id, seq, text, started_at, ended_at, backend,"
-                    " audio_seconds, inference_seconds, compound, label, speaker)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    " audio_seconds, inference_seconds, compound, label, speaker, translation)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         self.session_id,
                         item.seq,
@@ -301,6 +309,7 @@ class SessionStore:
                         item.compound,
                         item.label,
                         item.speaker,
+                        item.translation,
                     ),
                 )
                 if self._fts_enabled:
@@ -540,7 +549,7 @@ class SessionStore:
             return []
         try:
             rows = self._connection().execute(
-                "SELECT seq, text, started_at, ended_at, compound, label, speaker"
+                "SELECT seq, text, started_at, ended_at, compound, label, speaker, translation"
                 " FROM transcript WHERE session_id = ? ORDER BY seq LIMIT ?",
                 (session_id, limit),
             ).fetchall()

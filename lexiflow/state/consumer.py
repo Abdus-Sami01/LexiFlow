@@ -48,7 +48,7 @@ class AnalyticsConsumer(threading.Thread):
             self.store.set_partial(utterance.text, utterance.speaker)
             return
         try:
-            insight = self.engine.analyse(utterance.text)
+            insight = self.engine.analyse(utterance.text, utterance.translation)
         except Exception:
             insight = None
         self.store.record(
@@ -62,6 +62,7 @@ class AnalyticsConsumer(threading.Thread):
             speaker=utterance.speaker,
             speaker_confidence=utterance.speaker_confidence,
             spans=utterance.spans,
+            translation=utterance.translation,
         )
         self.store.update_metrics(
             asr_realtime_factor=round(utterance.realtime_factor, 3),

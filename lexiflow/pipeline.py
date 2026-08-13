@@ -34,6 +34,7 @@ class PipelineHealth:
     dropped_partials: int
     speaker_splits: int
     speakers: int
+    speech_translations: int
     keeping_up: bool
     errors: List[str]
 
@@ -49,9 +50,9 @@ class LexiFlowPipeline:
     ) -> None:
         self.config = config or LexiFlowConfig()
         self.store = store or SessionStore(self.config.state)
-        self.analytics = AnalyticsEngine(self.config.nlp)
+        self.analytics = AnalyticsEngine(self.config.nlp, self.config.translation)
         self.transcription = TranscriptionEngine(
-            self.config.asr, backend, self.config.diarization
+            self.config.asr, backend, self.config.diarization, self.config.translation
         )
         self.stream = MicrophoneStream(self.config.audio, on_level=self._on_level)
 
@@ -225,6 +226,7 @@ class LexiFlowPipeline:
             speakers=self.transcription.speakers.speaker_count
             if self.transcription.speakers
             else 0,
+            speech_translations=self.transcription.stats.speech_translations,
             errors=errors,
         )
 
@@ -242,6 +244,9 @@ class LexiFlowPipeline:
             "speakers": self.store.speakers(),
             "topics": self.store.topics(),
             "partial": self.store.partial(),
+            "translation": self.analytics.translator.stats()
+            if self.analytics.translator
+            else None,
         }
 
     def digest(self, limit: Optional[int] = None):

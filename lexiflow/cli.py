@@ -19,6 +19,8 @@ from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
 from .audio.conversion import prepare_for_whisper
 from .config import LexiFlowConfig
+from .nlp import translate as translation_module
+from .nlp.language import detect as detect_language_guess
 from .nlp.pipeline import AnalyticsEngine
 from .pipeline import LexiFlowPipeline
 from .state.store import SessionStore
@@ -35,6 +37,7 @@ class _Row:
     compound: float = 0.0
     label: str = "neutral"
     speaker: Optional[str] = None
+    translation: Optional[str] = None
     spans: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -42,6 +45,7 @@ class _Row:
             "seq": self.seq,
             "text": self.text,
             "speaker": self.speaker,
+            "translation": self.translation,
             "compound": self.compound,
             "label": self.label,
         }
@@ -96,9 +100,13 @@ def command_doctor(args: argparse.Namespace) -> int:
     print()
     report = backend_report()
     print("whisper backends :", ", ".join(report["available"]) or "none")
-    engine = AnalyticsEngine(_load_config(args.config).nlp)
+    config = _load_config(args.config)
+    engine = AnalyticsEngine(config.nlp, config.translation)
     for name, value in engine.backends.items():
         print(f"{name:<17}: {value}")
+    survey = translation_module.report(config.translation)
+    print(f"{'translators':<17}: {', '.join(survey.available)}")
+    print(f"{'language pairs':<17}: {', '.join(survey.pairs) or 'none installed'}")
     try:
         devices = list_input_devices()
         print(f"input devices    : {len(devices)}")
@@ -402,12 +410,101 @@ def command_export(args: argparse.Namespace) -> int:
     granularity = "word" if args.words else "segment"
     if args.output:
         written = export.write_many(
-            formats, Path(args.output), rows, payload, digest, granularity=granularity
+            formats,
+            Path(args.output),
+            rows,
+            payload,
+            digest,
+            granularity=granularity,
+            translated=args.translated,
         )
         for path in written:
             print(f"wrote {path}")
     else:
-        print(export.render(formats[0], rows, payload, digest, granularity=granularity))
+        print(
+            export.render(
+                formats[0],
+                rows,
+                payload,
+                digest,
+                granularity=granularity,
+                translated=args.translated,
+            )
+        )
+    store.close()
+    return 0
+
+
+def command_translate(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    config.translation.enabled = True
+    if args.target:
+        config.translation.target_language = args.target
+
+    if args.action == "pairs":
+        survey = translation_module.report(config.translation)
+        print(f"backend: {survey.backend}")
+        print("installed pairs:", ", ".join(survey.pairs) or "none")
+        return 0
+
+    if args.action == "install":
+        translator = translation_module.create_translator(config.translation)
+        if not isinstance(translator, translation_module.ArgosTranslator):
+            print(
+                "install needs argostranslate: pip install 'lexiflow[translate]'",
+                file=sys.stderr,
+            )
+            return 1
+        source, _, target = (args.pair or "").partition("-")
+        if not source or not target:
+            print("expected a pair like es-en", file=sys.stderr)
+            return 1
+        print(f"downloading the {source}->{target} model, this happens once")
+        try:
+            if not translator.install_pair(source, target):
+                print(f"no package published for {source}->{target}", file=sys.stderr)
+                return 1
+        except Exception as error:
+            print(f"could not install {source}->{target}: {error}", file=sys.stderr)
+            return 1
+        print("installed")
+        return 0
+
+    if args.action == "text":
+        engine = translation_module.TranslationEngine(config.translation)
+        source = args.source or detect_language_guess(args.pair or "").code
+        result = engine.translate(args.pair or "", source)
+        if result is None:
+            print("nothing to translate, or no local model for that pair", file=sys.stderr)
+            return 1
+        print(result.text)
+        return 0
+
+    store = SessionStore(config.state)
+    engine = translation_module.TranslationEngine(config.translation)
+    session_id = args.session or store.latest_session_with_transcript()
+    if not session_id:
+        print("no recorded session has a transcript", file=sys.stderr)
+        store.close()
+        return 1
+
+    rows = store.load_session(session_id)
+    if not rows:
+        print(f"session {session_id} has no transcript", file=sys.stderr)
+        store.close()
+        return 1
+
+    for row in rows:
+        source = detect_language_guess(row["text"]).code
+        rendered = row.get("translation")
+        if not rendered:
+            result = engine.translate(row["text"], source)
+            rendered = result.text if result else None
+        marker = f"[{source}]"
+        print(f"{marker:>5} {row['text']}")
+        if rendered:
+            print(f"   -> {rendered}")
+    print(f"\n{json.dumps(engine.stats(), indent=2)}")
     store.close()
     return 0
 
@@ -541,7 +638,22 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--words", action="store_true", help="one subtitle cue per word where the backend gave us"
     )
+    export_parser.add_argument(
+        "--translated", action="store_true", help="use the translation as the subtitle text"
+    )
     export_parser.set_defaults(handler=command_export)
+
+    translate_parser = subparsers.add_parser(
+        "translate", help="translate a session or a line, entirely offline"
+    )
+    translate_parser.add_argument(
+        "action", choices=["session", "text", "pairs", "install"], nargs="?", default="session"
+    )
+    translate_parser.add_argument("pair", nargs="?", help="text to translate, or a pair like es-en")
+    translate_parser.add_argument("--source", help="source language, detected when omitted")
+    translate_parser.add_argument("--target", help="target language, defaults to en")
+    translate_parser.add_argument("--session", help="session id, defaults to the most recent")
+    translate_parser.set_defaults(handler=command_translate)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
