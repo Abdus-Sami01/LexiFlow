@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
 import numpy as np
@@ -65,6 +66,8 @@ class WhisperBackend:
         self, audio: np.ndarray, sample_rate: int = 16_000, task: str = "transcribe"
     ) -> TranscriptionResult:
         raise NotImplementedError
+
+    model_format = "ggml"
 
     @property
     def supports_translation(self) -> bool:
@@ -207,6 +210,7 @@ class FasterWhisperBackend(WhisperBackend):
     """CTranslate2 build; a strong fallback when whisper.cpp is not compiled."""
 
     priority = 30
+    model_format = "ctranslate2"
 
     @classmethod
     def is_available(cls) -> bool:
@@ -216,6 +220,15 @@ class FasterWhisperBackend(WhisperBackend):
         module = _try_import("faster_whisper")
         if module is None:
             raise BackendUnavailable("faster-whisper is not installed")
+
+        target = self.config.model_path or self.config.model_name
+        if not Path(target).exists() and not self.config.allow_downloads:
+            raise BackendUnavailable(
+                f"faster-whisper would download '{target}' from the network. "
+                "Point asr.model_path at a local CTranslate2 directory, or set "
+                "asr.allow_downloads = true to permit the one-off fetch."
+            )
+
         self._model = module.WhisperModel(
             self.config.model_path or self.config.model_name,
             device="cpu",

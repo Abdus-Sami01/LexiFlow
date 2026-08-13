@@ -88,6 +88,7 @@ class ASRConfig:
     single_segment: bool = False
     max_queue_size: int = 32
     max_realtime_factor: float = 0.75
+    allow_downloads: bool = False
     warmup: bool = True
 
     def resolved_threads(self) -> int:

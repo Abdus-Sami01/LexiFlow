@@ -15,6 +15,7 @@ import numpy as np
 
 from . import __version__, export, insights
 from . import batch as batch_module
+from . import selftest as selftest_module
 from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
@@ -688,6 +689,56 @@ def command_batch(args: argparse.Namespace) -> int:
     return 1 if report.failed else 0
 
 
+def command_selftest(args: argparse.Namespace) -> int:
+    """Run the real model over known audio and report what actually works here."""
+    config = _load_config(args.config)
+    if args.backend:
+        config.asr.backend = args.backend
+
+    print("running the pipeline end to end, this takes a moment\n")
+    result = selftest_module.run(
+        config, model=args.model, on_check=None if args.json else lambda check: print(check)
+    )
+
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2))
+    else:
+        print()
+        print(result.as_text(include_checks=False))
+    return 1 if result.failed else 0
+
+
+def command_setup(args: argparse.Namespace) -> int:
+    """Fetch a model suited to this machine, then prove the whole thing works."""
+    config = _load_config(args.config)
+    profile = hardware.detect_hardware()
+    name = args.model or ("small.en" if profile.physical_cores >= 8 else "base.en")
+
+    if not models.is_installed(name) and name in models.CATALOGUE:
+        spec = models.CATALOGUE[name]
+        print(f"{profile.physical_cores} physical cores, choosing {name} ({spec.megabytes} MB)")
+        try:
+            models.download(name, progress=_progress)
+            sys.stderr.write("\n")
+        except RuntimeError as error:
+            sys.stderr.write("\n")
+            print(error, file=sys.stderr)
+            print("carrying on so the rest can still be checked", file=sys.stderr)
+    else:
+        print(f"using {name}")
+
+    if args.config_path:
+        config.asr.model_path = models.resolve(name) or config.asr.model_path
+        config.save(args.config_path)
+        print(f"wrote {args.config_path}")
+
+    print()
+    result = selftest_module.run(config, model=name, on_check=lambda check: print(check))
+    print()
+    print(result.as_text(include_checks=False))
+    return 1 if result.failed else 0
+
+
 def command_dashboard(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import cli as streamlit_cli
@@ -835,6 +886,17 @@ def build_parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate", help="check a config file for bad settings")
     validate.add_argument("path", nargs="?")
     validate.set_defaults(handler=command_validate)
+
+    setup = subparsers.add_parser("setup", help="fetch a model for this machine and verify it")
+    setup.add_argument("--model", help="override the automatic choice")
+    setup.add_argument("--config-path", help="also write a config file pointing at the model")
+    setup.set_defaults(handler=command_setup)
+
+    check = subparsers.add_parser("selftest", help="run the real model over known audio")
+    check.add_argument("--model")
+    check.add_argument("--backend")
+    check.add_argument("--json", action="store_true")
+    check.set_defaults(handler=command_selftest)
 
     doctor = subparsers.add_parser("doctor", help="report hardware, backends and devices")
     doctor.set_defaults(handler=command_doctor)
