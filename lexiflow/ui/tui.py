@@ -57,6 +57,7 @@ class LexiFlowTUI(App):
         Binding("d", "load_demo", "demo"),
         Binding("e", "export_session", "export"),
         Binding("r", "export_redacted", "export redacted"),
+        Binding("h", "show_history", "history"),
         Binding("c", "clear_search", "clear filter"),
         Binding("q", "quit", "quit"),
     ]
@@ -237,6 +238,19 @@ class LexiFlowTUI(App):
         for line in DEMO_LINES:
             self.pipeline.submit_text(line)
         self.tick()
+
+    def action_show_history(self) -> None:
+        from .. import insights
+
+        log = self.query_one("#transcript", RichLog)
+        review = insights.build(self.pipeline.store)
+        if not review.sessions:
+            self.notify("no earlier sessions recorded yet", severity="warning")
+            return
+        width = log.content_size.width or None
+        log.write("", width=width)
+        for line in review.as_markdown().splitlines():
+            log.write(f"[grey62]{line}[/]" if line else "", width=width)
 
     def action_export_session(self) -> None:
         self._export(redacted=False)

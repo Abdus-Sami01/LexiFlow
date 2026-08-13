@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 import streamlit as st
 
-from lexiflow import export
+from lexiflow import export, insights
 from lexiflow.asr.backends import backend_report
 from lexiflow.audio.capture import AudioBackendUnavailable, list_input_devices
 from lexiflow.cli import DEMO_LINES
@@ -228,6 +228,15 @@ def _download_row(pipeline: LexiFlowPipeline, digest) -> None:
         )
 
 
+def _history_panel(pipeline: LexiFlowPipeline) -> None:
+    with st.expander("across earlier sessions", expanded=False):
+        review = insights.build(pipeline.store)
+        if not review.sessions:
+            st.caption("no earlier sessions recorded yet")
+            return
+        st.markdown(review.as_markdown())
+
+
 def _entity_panel(snapshot: Dict[str, Any]) -> None:
     st.subheader("entities")
     entities = snapshot["entities"]
@@ -250,9 +259,10 @@ def main() -> None:
         history = pipeline.store.search_all_sessions(query, limit=10)
         earlier = [hit for hit in history if hit["session_id"] != pipeline.store.session_id]
         if earlier:
-            with st.expander(f"{len(earlier)} hits in earlier sessions"):
+            with st.expander(f"{len(earlier)} hits in earlier sessions, best first"):
                 for hit in earlier:
-                    st.caption(f"{hit['session_name'] or hit['session_id']} · {hit['text']}")
+                    label = hit["session_name"] or hit["session_id"]
+                    st.caption(f"{hit['score']:.2f} · {label} · {hit['snippet']}")
 
     snapshot = pipeline.snapshot()
     _metrics_row(snapshot)
@@ -267,6 +277,7 @@ def main() -> None:
         _entity_panel(snapshot)
 
     _digest_panel(pipeline)
+    _history_panel(pipeline)
 
     errors = snapshot["health"]["errors"]
     if errors:

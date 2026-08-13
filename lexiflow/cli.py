@@ -317,7 +317,7 @@ def command_search(args: argparse.Namespace) -> int:
         print("no matches")
     for hit in hits:
         label = hit["session_name"] or hit["session_id"]
-        print(f"[{label} #{hit['seq']}] {hit['text']}")
+        print(f"[{hit['score']:.2f}] [{label} #{hit['seq']}] {hit['snippet']}")
     store.close()
     return 0
 

@@ -227,7 +227,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-244 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+254 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -238,8 +238,8 @@ the translation engine's caching, failure handling and fallback to analysing a t
 the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
 sheds frames without allocating, fault injection into the store, its listeners and its search, every
 redaction mode and the leaks that regression-tested their way out of it, config validation and
-round-tripping, cross-session aggregation over a seeded three-meeting history, and full
-audio-to-insight passes through all three threads.
+round-tripping, cross-session aggregation over a seeded three-meeting history, BM25
+ranking and its FTS-less fallback, and full audio-to-insight passes through all three threads.
 
 ## When something goes wrong
 
@@ -255,6 +255,22 @@ exit. `--verbose` logs each one as it happens; `--quiet` keeps only hard errors.
 A database that cannot be opened at all downgrades the session to memory-only and says so, rather
 than taking the process down with it. Missing optional dependencies are not failures — they are
 reported as backend state (`entities: regex`) because that is what they are.
+
+## Search
+
+Search is BM25 ranked through SQLite's FTS5, best match first, with the matched terms highlighted
+in a snippet. If the interpreter was built without FTS5, a small TF-IDF ranker in Python takes
+over so results stay ordered rather than falling back to raw substring order.
+
+```bash
+python -m lexiflow search "buffer latency"
+# [1.00] [session-20260813-093248 #6] Great news, the new ring «buffer» cut «latency» by 40 percent and…
+```
+
+Scores are normalised to 0-1 within the result set, because raw BM25 magnitudes depend on corpus
+size and mean nothing to a reader. Both dashboards use the same ranking: Streamlit lists earlier
+sessions best-first under the search box, and the terminal dashboard shows the cross-session
+review on `h`.
 
 ## Across sessions
 

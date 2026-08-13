@@ -86,3 +86,12 @@ async def test_tui_exports_a_redacted_copy(tmp_path):
         body = written[0].read_text()
         assert "Sarah Chen" not in body
         assert "[PERSON_1]" in body
+
+
+@pytest.mark.asyncio
+async def test_tui_history_key_reports_when_empty(tmp_path):
+    app = LexiFlowTUI(build_pipeline(tmp_path), refresh_seconds=10.0)
+    async with app.run_test() as pilot:
+        await pilot.press("h")
+        await pilot.pause()
+        assert app._rendered_seq == 0

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 import sqlite3
 import threading
 import time
@@ -15,6 +17,9 @@ from typing import Any, Callable, Deque, Dict, Iterable, List, Optional
 from ..config import StateConfig
 from ..nlp.pipeline import Insight
 from ..observability import record_failure
+
+SNIPPET_OPEN = "«"
+SNIPPET_CLOSE = "»"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -75,6 +80,52 @@ FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts
 USING fts5(text, session_id UNINDEXED, seq UNINDEXED);
 """
+
+
+def _rank_without_fts(
+    query: str, rows: List[tuple], limit: int
+) -> List[Dict[str, Any]]:
+    """A small TF-IDF fallback so ranking survives an FTS-less SQLite build."""
+    terms = [term for term in re.findall(r"[^\W\d_]+", query.lower()) if term]
+    if not terms:
+        return []
+
+    documents = [(seq, text, set(re.findall(r"[^\W\d_]+", text.lower()))) for seq, text in rows]
+    total = len(documents) or 1
+    frequencies = {
+        term: sum(1 for _, _, words in documents if term in words) or 1 for term in terms
+    }
+
+    scored = []
+    for seq, text, words in documents:
+        score = sum(
+            math.log(1 + total / frequencies[term]) for term in terms if term in words
+        )
+        if score > 0:
+            scored.append(
+                {
+                    "seq": seq,
+                    "text": text,
+                    "raw_score": score,
+                    "snippet": _highlight(text, terms),
+                }
+            )
+    scored.sort(key=lambda row: (-row["raw_score"], -row["seq"]))
+    return _with_relevance(scored[:limit])
+
+
+def _with_relevance(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """BM25 magnitudes are corpus dependent; a 0-1 relevance is what a UI can use."""
+    best = max((row.get("raw_score") or 0.0) for row in rows) if rows else 0.0
+    for row in rows:
+        raw = row.pop("raw_score", 0.0)
+        row["score"] = round(raw / best, 4) if best > 0 else 1.0
+    return rows
+
+
+def _highlight(text: str, terms: List[str]) -> str:
+    pattern = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
+    return pattern.sub(lambda match: f"{SNIPPET_OPEN}{match.group(0)}{SNIPPET_CLOSE}", text)
 
 
 @dataclass
@@ -477,32 +528,38 @@ class SessionStore:
         return payload
 
     def search(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Instant local search: FTS5 first, in-memory substring scan as backup."""
+        """Instant local search: BM25 ranked when FTS is there, substring scan when not."""
         needle = (query or "").strip()
         if not needle:
             return []
 
         if self.config.persist and self._fts_enabled:
             try:
-                connection = self._connection()
-                rows = connection.execute(
-                    "SELECT seq, text FROM transcript_fts WHERE transcript_fts MATCH ?"
-                    " AND session_id = ? ORDER BY seq DESC LIMIT ?",
+                rows = self._connection().execute(
+                    "SELECT seq, text, bm25(transcript_fts) AS score,"
+                    f" snippet(transcript_fts, 0, '{SNIPPET_OPEN}', '{SNIPPET_CLOSE}', '…', 12)"
+                    " AS snippet FROM transcript_fts WHERE transcript_fts MATCH ?"
+                    " AND session_id = ? ORDER BY score LIMIT ?",
                     (self._as_match_query(needle), self.session_id, limit),
                 ).fetchall()
                 if rows:
-                    return [{"seq": row["seq"], "text": row["text"]} for row in rows]
+                    return _with_relevance(
+                        [
+                            {
+                                "seq": row["seq"],
+                                "text": row["text"],
+                                "raw_score": -float(row["score"]),
+                                "snippet": row["snippet"],
+                            }
+                            for row in rows
+                        ]
+                    )
             except sqlite3.Error as error:
                 record_failure("store.search", error)
 
-        lowered = needle.lower()
         with self._lock:
-            matches = [
-                {"seq": item.seq, "text": item.text}
-                for item in self._transcript
-                if lowered in item.text.lower()
-            ]
-        return matches[-limit:][::-1]
+            items = list(self._transcript)
+        return _rank_without_fts(needle, [(item.seq, item.text) for item in items], limit)
 
     def search_all_sessions(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search every session ever recorded, newest hits first."""
@@ -513,9 +570,12 @@ class SessionStore:
             connection = self._connection()
             if self._fts_enabled:
                 rows = connection.execute(
-                    "SELECT f.seq, f.text, f.session_id, s.name FROM transcript_fts f"
+                    "SELECT f.seq, f.text, f.session_id, s.name,"
+                    " bm25(transcript_fts) AS score,"
+                    f" snippet(transcript_fts, 0, '{SNIPPET_OPEN}', '{SNIPPET_CLOSE}', '…', 12)"
+                    " AS snippet FROM transcript_fts f"
                     " LEFT JOIN sessions s ON s.id = f.session_id"
-                    " WHERE transcript_fts MATCH ? ORDER BY f.rowid DESC LIMIT ?",
+                    " WHERE transcript_fts MATCH ? ORDER BY score LIMIT ?",
                     (self._as_match_query(needle), limit),
                 ).fetchall()
             else:
@@ -528,15 +588,19 @@ class SessionStore:
         except sqlite3.Error as error:
             record_failure("store.search_all_sessions", error)
             return []
-        return [
-            {
-                "seq": row["seq"],
-                "text": row["text"],
-                "session_id": row["session_id"],
-                "session_name": row["name"],
-            }
-            for row in rows
-        ]
+        return _with_relevance(
+            [
+                {
+                    "seq": row["seq"],
+                    "text": row["text"],
+                    "session_id": row["session_id"],
+                    "session_name": row["name"],
+                    "raw_score": -float(row["score"]) if "score" in row.keys() else 1.0,
+                    "snippet": row["snippet"] if "snippet" in row.keys() else row["text"],
+                }
+                for row in rows
+            ]
+        )
 
     def latest_session_with_transcript(self, exclude_current: bool = True) -> Optional[str]:
         """Most recent session that actually holds transcript rows."""
