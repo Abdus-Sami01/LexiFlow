@@ -86,6 +86,7 @@ python -m lexiflow bench               # time every stage, --json for machine ou
 python -m lexiflow sessions            # list everything recorded so far
 python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
+python -m lexiflow review              # open items and recurring themes across sessions
 python -m lexiflow export --format srt --format md --output notes
 python -m lexiflow export --format srt --words --output captions
 python -m lexiflow redact "text to scrub"      # preview redaction
@@ -217,6 +218,7 @@ the pipeline is unaffected.
 | `lexiflow/pipeline.py` | — | orchestrator that owns the three threads and both queues |
 | `lexiflow/observability.py` | — | the counted, named record of every recovered failure |
 | `lexiflow/redaction.py` | — | pattern and entity driven scrubbing with stable pseudonyms |
+| `lexiflow/insights.py` | — | cross-session review: open items, recurring themes, trends |
 
 ## Tests
 
@@ -225,7 +227,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-230 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+244 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -236,7 +238,8 @@ the translation engine's caching, failure handling and fallback to analysing a t
 the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
 sheds frames without allocating, fault injection into the store, its listeners and its search, every
 redaction mode and the leaks that regression-tested their way out of it, config validation and
-round-tripping, and full audio-to-insight passes through all three threads.
+round-tripping, cross-session aggregation over a seeded three-meeting history, and full
+audio-to-insight passes through all three threads.
 
 ## When something goes wrong
 
@@ -252,6 +255,21 @@ exit. `--verbose` logs each one as it happens; `--quiet` keeps only hard errors.
 A database that cannot be opened at all downgrades the session to memory-only and says so, rather
 than taking the process down with it. Missing optional dependencies are not failures — they are
 reported as backend state (`entities: regex`) because that is what they are.
+
+## Across sessions
+
+One meeting's action items are the easy part. `review` asks the question that spans meetings:
+
+```bash
+python -m lexiflow review            # markdown
+python -m lexiflow review --json     # same data, machine readable
+```
+
+It reports what is still open with how long it has been open, flags anything older than a week as
+stale, groups near-identical items so a blocker raised in three meetings appears once as "raised
+3x" rather than three separate lines, lists the people named most often and in how many separate
+sessions, and shows average sentiment per session over time. All of it is SQL over sessions
+already on disk; nothing new is recorded to make it work.
 
 ## Redaction
 

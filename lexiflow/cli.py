@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from . import __version__, export
+from . import __version__, export, insights
 from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
@@ -616,6 +616,26 @@ def command_redact(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_review(args: argparse.Namespace) -> int:
+    """What is still open, what keeps recurring, and who keeps coming up."""
+    config = _load_config(args.config)
+    store = SessionStore(config.state)
+    review = insights.build(store, sessions=args.sessions, people=args.people)
+
+    if not review.sessions:
+        print("no recorded sessions yet", file=sys.stderr)
+        store.close()
+        return 1
+
+    if args.json:
+        print(json.dumps(review.as_dict(), indent=2, default=str))
+    else:
+        print(review.as_markdown())
+
+    store.close()
+    return 0
+
+
 def command_dashboard(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import cli as streamlit_cli
@@ -853,6 +873,12 @@ def build_parser() -> argparse.ArgumentParser:
     redact_parser.add_argument("--mode", choices=["pseudonym", "label", "mask", "hash"])
     redact_parser.add_argument("--kinds", help="comma separated, e.g. person,email,phone")
     redact_parser.set_defaults(handler=command_redact)
+
+    review = subparsers.add_parser("review", help="what is still open across every session")
+    review.add_argument("--sessions", type=int, default=20)
+    review.add_argument("--people", type=int, default=8)
+    review.add_argument("--json", action="store_true")
+    review.set_defaults(handler=command_review)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)

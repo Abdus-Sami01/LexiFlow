@@ -608,6 +608,65 @@ class SessionStore:
             return []
         return [{**dict(row), "done": bool(row["done"])} for row in rows]
 
+    def all_actions(self, limit: int = 500, open_only: bool = False) -> List[Dict[str, Any]]:
+        """Every extracted item across every session, newest session first."""
+        if not self.config.persist:
+            return []
+        clause = " AND a.done = 0" if open_only else ""
+        try:
+            rows = self._connection().execute(
+                "SELECT a.id, a.session_id, a.kind, a.text, a.due, a.priority, a.confidence,"
+                " a.done, a.created_at, s.name AS session_name, s.started_at AS session_started"
+                f" FROM action_items a LEFT JOIN sessions s ON s.id = a.session_id"
+                f" WHERE 1=1{clause}"
+                " ORDER BY s.started_at DESC, a.priority DESC, a.created_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            record_failure("store.all_actions", error)
+            return []
+        return [{**dict(row), "done": bool(row["done"])} for row in rows]
+
+    def session_summaries(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """One row per session: size, sentiment and how many items came out of it."""
+        if not self.config.persist:
+            return []
+        try:
+            rows = self._connection().execute(
+                "SELECT s.id, s.name, s.started_at, s.ended_at,"
+                " COUNT(t.id) AS utterances,"
+                " AVG(t.compound) AS average_sentiment,"
+                " SUM(t.audio_seconds) AS audio_seconds,"
+                " COUNT(DISTINCT t.speaker) AS speakers"
+                " FROM sessions s LEFT JOIN transcript t ON t.session_id = s.id"
+                " GROUP BY s.id HAVING utterances > 0"
+                " ORDER BY s.started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            record_failure("store.session_summaries", error)
+            return []
+        return [dict(row) for row in rows]
+
+    def entity_totals(self, limit: int = 50, kind: Optional[str] = None) -> List[Dict[str, Any]]:
+        """How often each entity appears, and in how many separate sessions."""
+        if not self.config.persist:
+            return []
+        clause = " WHERE kind = ?" if kind else ""
+        arguments: tuple = (kind, limit) if kind else (limit,)
+        try:
+            rows = self._connection().execute(
+                "SELECT text, kind, COUNT(*) AS mentions,"
+                " COUNT(DISTINCT session_id) AS sessions"
+                f" FROM entities{clause}"
+                " GROUP BY lower(text), kind ORDER BY sessions DESC, mentions DESC LIMIT ?",
+                arguments,
+            ).fetchall()
+        except sqlite3.Error as error:
+            record_failure("store.entity_totals", error)
+            return []
+        return [dict(row) for row in rows]
+
     def session_info(self, session_id: str) -> Dict[str, Any]:
         if not self.config.persist:
             return {"id": session_id, "name": session_id}
