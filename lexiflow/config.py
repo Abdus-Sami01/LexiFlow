@@ -6,9 +6,11 @@ import json
 import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 DEFAULT_STATE_DIR = Path(os.environ.get("LEXIFLOW_HOME", Path.home() / ".lexiflow"))
+SUPPORTED_LANGUAGES = frozenset({"en", "es", "fr", "de", "it", "pt"})
+REDACTION_MODES = frozenset({"pseudonym", "label", "mask", "hash"})
 
 
 @dataclass
@@ -199,6 +201,105 @@ class LexiFlowConfig:
         return cls(**kwargs)
 
     @classmethod
-    def load(cls, path: os.PathLike | str) -> "LexiFlowConfig":
+    def load(cls, path: os.PathLike | str, strict: bool = True) -> "LexiFlowConfig":
         with open(path, "r", encoding="utf-8") as handle:
-            return cls.from_dict(json.load(handle))
+            config = cls.from_dict(json.load(handle))
+        problems = config.validate()
+        if problems and strict:
+            raise ValueError(
+                f"{path} has {len(problems)} invalid setting(s):\n  "
+                + "\n  ".join(problems)
+            )
+        return config
+
+    def save(self, path: os.PathLike | str, indent: int = 2) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.to_json(indent), encoding="utf-8")
+        return target
+
+    def validate(self) -> List[str]:
+        """Catch the settings that would otherwise fail quietly at 3am."""
+        problems: List[str] = []
+
+        if self.audio.target_sample_rate != 16_000:
+            problems.append(
+                f"audio.target_sample_rate is {self.audio.target_sample_rate}; "
+                "Whisper only accepts 16000"
+            )
+        for name, value in (
+            ("audio.block_duration_ms", self.audio.block_duration_ms),
+            ("audio.ring_buffer_seconds", self.audio.ring_buffer_seconds),
+            ("audio.target_channels", self.audio.target_channels),
+        ):
+            if value <= 0:
+                problems.append(f"{name} must be positive, got {value}")
+
+        if self.segmenter.min_segment_seconds >= self.segmenter.max_segment_seconds:
+            problems.append(
+                "segmenter.min_segment_seconds must be below max_segment_seconds "
+                f"({self.segmenter.min_segment_seconds} >= "
+                f"{self.segmenter.max_segment_seconds})"
+            )
+        if self.segmenter.emit_partials and (
+            self.segmenter.partial_min_seconds > self.segmenter.max_segment_seconds
+        ):
+            problems.append(
+                "segmenter.partial_min_seconds is longer than max_segment_seconds, "
+                "so no partial can ever be emitted"
+            )
+        for name, value in (
+            ("segmenter.min_band_ratio", self.segmenter.min_band_ratio),
+            ("segmenter.max_spectral_flatness", self.segmenter.max_spectral_flatness),
+            ("segmenter.max_zero_crossing_rate", self.segmenter.max_zero_crossing_rate),
+            ("segmenter.noise_floor_alpha", self.segmenter.noise_floor_alpha),
+        ):
+            if not 0.0 <= value <= 1.0:
+                problems.append(f"{name} must be between 0 and 1, got {value}")
+
+        if not 0.0 < self.diarization.similarity_threshold < 1.0:
+            problems.append(
+                "diarization.similarity_threshold must be between 0 and 1, got "
+                f"{self.diarization.similarity_threshold}"
+            )
+        if self.diarization.max_speakers < 1:
+            problems.append("diarization.max_speakers must be at least 1")
+        if not 0.0 < self.diarization.adaptation_rate <= 1.0:
+            problems.append("diarization.adaptation_rate must be between 0 and 1")
+
+        if self.asr.threads < 0:
+            problems.append("asr.threads cannot be negative; use 0 to autodetect")
+        if self.asr.beam_size < 1:
+            problems.append("asr.beam_size must be at least 1")
+        if self.asr.max_queue_size < 1:
+            problems.append("asr.max_queue_size must be at least 1")
+        if self.asr.max_realtime_factor <= 0:
+            problems.append("asr.max_realtime_factor must be positive")
+
+        if self.nlp.summary_sentences < 1:
+            problems.append("nlp.summary_sentences must be at least 1")
+        if not 0.0 <= self.nlp.topic_threshold <= 1.0:
+            problems.append("nlp.topic_threshold must be between 0 and 1")
+        if self.nlp.default_language not in SUPPORTED_LANGUAGES:
+            problems.append(
+                f"nlp.default_language '{self.nlp.default_language}' has no rule pack; "
+                f"choose from {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+            )
+
+        if self.translation.enabled and not self.translation.target_language:
+            problems.append("translation.enabled needs a translation.target_language")
+        if self.translation.cache_size < 1:
+            problems.append("translation.cache_size must be at least 1")
+
+        if self.redaction.mode not in REDACTION_MODES:
+            problems.append(
+                f"redaction.mode '{self.redaction.mode}' is unknown; "
+                f"choose from {', '.join(sorted(REDACTION_MODES))}"
+            )
+        if self.redaction.enabled and not self.redaction.kinds:
+            problems.append("redaction.enabled needs at least one entry in redaction.kinds")
+
+        if self.state.max_transcript_items < 1:
+            problems.append("state.max_transcript_items must be at least 1")
+
+        return problems

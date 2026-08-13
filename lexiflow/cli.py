@@ -69,7 +69,12 @@ DEMO_LINES = [
 
 
 def _load_config(path: Optional[str]) -> LexiFlowConfig:
-    return LexiFlowConfig.load(path) if path else LexiFlowConfig()
+    if not path:
+        return LexiFlowConfig()
+    try:
+        return LexiFlowConfig.load(path)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"cannot use {path}: {error}") from error
 
 
 def _apply_model(config: LexiFlowConfig, requested: Optional[str]) -> Optional[str]:
@@ -97,6 +102,53 @@ def _read_wav(path: Path) -> tuple[np.ndarray, int]:
     if dtype is None:
         raise ValueError(f"unsupported sample width: {width} bytes")
     return prepare_for_whisper(frames, rate, channels=channels, dtype=dtype), 16_000
+
+
+def command_init(args: argparse.Namespace) -> int:
+    """Write a config file holding every default, ready to edit."""
+    target = Path(args.path)
+    if target.exists() and not args.force:
+        print(f"{target} already exists, pass --force to overwrite", file=sys.stderr)
+        return 1
+
+    config = LexiFlowConfig()
+    if args.model:
+        config.asr.model_path = args.model
+    if args.translate:
+        config.translation.enabled = True
+    if args.redact:
+        config.redaction.enabled = True
+
+    problems = config.validate()
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+
+    config.save(target)
+    print(f"wrote {target}")
+    print(f"edit it, then run: python -m lexiflow --config {target} run")
+    return 0
+
+
+def command_validate(args: argparse.Namespace) -> int:
+    path = args.path or args.config
+    if not path:
+        print("give a config path to check", file=sys.stderr)
+        return 1
+    try:
+        config = LexiFlowConfig.load(path, strict=False)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"cannot read {path}: {error}", file=sys.stderr)
+        return 1
+
+    problems = config.validate()
+    if not problems:
+        print(f"{path} is valid")
+        return 0
+    print(f"{path} has {len(problems)} problem(s):", file=sys.stderr)
+    for problem in problems:
+        print(f"  {problem}", file=sys.stderr)
+    return 1
 
 
 def command_doctor(args: argparse.Namespace) -> int:
@@ -699,6 +751,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="log every recovered failure")
     parser.add_argument("--quiet", action="store_true", help="only log hard errors")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init = subparsers.add_parser("init", help="write a config file with every default")
+    init.add_argument("path", nargs="?", default="lexiflow.json")
+    init.add_argument("--model", help="preset asr.model_path")
+    init.add_argument("--translate", action="store_true", help="enable translation")
+    init.add_argument("--redact", action="store_true", help="enable redaction")
+    init.add_argument("--force", action="store_true")
+    init.set_defaults(handler=command_init)
+
+    validate = subparsers.add_parser("validate", help="check a config file for bad settings")
+    validate.add_argument("path", nargs="?")
+    validate.set_defaults(handler=command_validate)
 
     doctor = subparsers.add_parser("doctor", help="report hardware, backends and devices")
     doctor.set_defaults(handler=command_doctor)

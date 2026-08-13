@@ -70,6 +70,8 @@ backend, and without spaCy or vaderSentiment the bundled regex and lexicon paths
 ## Use
 
 ```bash
+python -m lexiflow init                # write lexiflow.json with every default
+python -m lexiflow validate            # check a config before you rely on it
 python -m lexiflow doctor              # hardware, backends, devices
 python -m lexiflow models list         # catalogue of ggml weights and what is installed
 python -m lexiflow models get base.en  # download it, resumable, into ~/.lexiflow/models
@@ -174,11 +176,19 @@ tracking over time.
 
 ## Configuration
 
-Every knob lives in `lexiflow/config.py` and can be loaded from JSON:
+Every knob lives in `lexiflow/config.py`. Generate a file holding all of them, edit it, and pass
+it to any command:
 
 ```bash
-python -m lexiflow --config my-settings.json run
+python -m lexiflow init lexiflow.json --translate --redact
+python -m lexiflow validate lexiflow.json
+python -m lexiflow --config lexiflow.json run
 ```
+
+Settings are validated on load, so a config that cannot work says why and exits instead of
+behaving strangely an hour in — a sample rate Whisper will not accept, a minimum segment longer
+than the maximum, a beam size of zero, an unknown redaction mode, a default language with no rule
+pack. Unknown keys are ignored rather than fatal, so a config from an older version still opens.
 
 The sections are `audio` (sample rates, block size, ring buffer length), `segmenter` (min/max
 segment length, silence hangover, noise floor adaptation, spectral gate thresholds, partial
@@ -215,7 +225,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-201 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+230 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -225,8 +235,8 @@ deliberately slow backend, the terminal dashboard driven headlessly through its 
 the translation engine's caching, failure handling and fallback to analysing a translation,
 the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
 sheds frames without allocating, fault injection into the store, its listeners and its search, every
-redaction mode and the leaks that regression-tested their way out of it, and full
-audio-to-insight passes through all three threads.
+redaction mode and the leaks that regression-tested their way out of it, config validation and
+round-tripping, and full audio-to-insight passes through all three threads.
 
 ## When something goes wrong
 
