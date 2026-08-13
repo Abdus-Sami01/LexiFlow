@@ -56,6 +56,7 @@ class LexiFlowTUI(App):
         Binding("s", "toggle_capture", "start/stop"),
         Binding("d", "load_demo", "demo"),
         Binding("e", "export_session", "export"),
+        Binding("r", "export_redacted", "export redacted"),
         Binding("c", "clear_search", "clear filter"),
         Binding("q", "quit", "quit"),
     ]
@@ -238,18 +239,34 @@ class LexiFlowTUI(App):
         self.tick()
 
     def action_export_session(self) -> None:
+        self._export(redacted=False)
+
+    def action_export_redacted(self) -> None:
+        self._export(redacted=True)
+
+    def _export(self, redacted: bool) -> None:
         from .. import export
 
-        rows = self.pipeline.store.transcript()
-        if not rows:
+        if not self.pipeline.store.transcript():
             self.notify("nothing to export yet", severity="warning")
             return
+
+        if redacted:
+            rows, payload, _ = self.pipeline.redacted()
+            stem = f"{self.pipeline.store.session_name}-redacted"
+            digest = self.pipeline.digest(rows=rows)
+        else:
+            rows = self.pipeline.store.transcript()
+            payload = self.pipeline.store.export()
+            stem = self.pipeline.store.session_name
+            digest = self.pipeline.digest()
+
         target = export.write(
             "md",
-            self.pipeline.store.database_path.parent / f"{self.pipeline.store.session_name}.md",
+            self.pipeline.store.database_path.parent / f"{stem}.md",
             rows,
-            self.pipeline.store.export(),
-            self.pipeline.digest(),
+            payload,
+            digest,
         )
         self.notify(f"wrote {target}")
 

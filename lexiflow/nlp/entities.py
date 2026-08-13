@@ -26,7 +26,19 @@ INTERESTING_LABELS = {
 }
 
 TITLE_PATTERN = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Prof)\.?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)")
-PERSON_PATTERN = re.compile(r"\b([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b")
+PERSON_PATTERN = re.compile(r"\b(?=([A-Z][a-z]{2,})\s+([A-Z][a-z]{2,})\b)")
+
+NON_NAME_LEADERS = frozenset(
+    """
+    email call text remind ask tell send ship review check follow meet let please can could
+    would should will shall the this that these those there here what when where which who
+    why how our your their his her its every each some many most next last first second
+    good great morning afternoon evening hello thanks thank sorry maybe perhaps also but and
+    before after during until while because since though although however therefore
+    monday tuesday wednesday thursday friday saturday sunday today tomorrow yesterday
+    january february march april may june july august september october november december
+    """.split()
+)
 ORG_SUFFIX_PATTERN = re.compile(
     r"\b([A-Z][A-Za-z0-9&.\-]*(?:\s+[A-Z][A-Za-z0-9&.\-]*)*)\s+"
     r"(Inc|LLC|Ltd|Corp|Corporation|Company|GmbH|PLC|Group|Labs|Technologies|Systems)\b"
@@ -136,10 +148,10 @@ class EntityExtractor:
                 skip.append((start, end))
 
         for match in PERSON_PATTERN.finditer(text):
-            start, end = match.span()
-            if overlaps(start, end):
+            start, end = match.start(1), match.end(2)
+            if overlaps(start, end) or match.group(1).lower() in NON_NAME_LEADERS:
                 continue
-            found.append(Entity(match.group(0), "PERSON", "person", start, end, source="regex"))
+            found.append(Entity(text[start:end], "PERSON", "person", start, end, source="regex"))
             skip.append((start, end))
 
         return found

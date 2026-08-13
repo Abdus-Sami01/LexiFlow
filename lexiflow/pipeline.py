@@ -17,6 +17,8 @@ from .audio.segmenter import SpeechSegment
 from .config import LexiFlowConfig
 from .nlp.pipeline import AnalyticsEngine
 from .observability import FAILURES, record_failure
+from .redaction import Redactor
+from .redaction import build as build_redactor
 from .state.consumer import AnalyticsConsumer
 from .state.store import SessionStore
 
@@ -56,6 +58,11 @@ class LexiFlowPipeline:
         self.analytics = AnalyticsEngine(self.config.nlp, self.config.translation)
         self.transcription = TranscriptionEngine(
             self.config.asr, backend, self.config.diarization, self.config.translation
+        )
+        self.redactor: Optional[Redactor] = (
+            build_redactor(self.config.redaction, self.analytics.entities)
+            if self.config.redaction.enabled
+            else None
         )
         self.stream = MicrophoneStream(self.config.audio, on_level=self._on_level)
 
@@ -108,7 +115,7 @@ class LexiFlowPipeline:
             self.transcription, self._segment_queue, self._utterance_queue
         )
         self._analytics_consumer = AnalyticsConsumer(
-            self.analytics, self.store, self._utterance_queue
+            self.analytics, self.store, self._utterance_queue, scrub=self.scrub
         )
 
         for worker in (self._producer, self._asr_consumer, self._analytics_consumer):
@@ -162,7 +169,21 @@ class LexiFlowPipeline:
     def submit_text(self, text: str) -> None:
         """Inject a transcript line directly, skipping capture and inference."""
         insight = self.analytics.analyse(text)
-        self.store.record(text, insight)
+        self.store.record(self.scrub(text), insight)
+
+    def scrub(self, text: str) -> str:
+        """Redact at source only when asked; by default the store keeps the original."""
+        if self.redactor is None or not self.config.redaction.redact_at_source:
+            return text
+        return self.redactor.redact(text).text
+
+    def redacted(self, limit: Optional[int] = None):
+        """Transcript rows and payload with identifying detail replaced."""
+        redactor = self.redactor or build_redactor(self.config.redaction, self.analytics.entities)
+        rows = redactor.redact_rows(self.store.transcript(limit))
+        payload = redactor.redact_payload(self.store.export())
+        payload["transcript"] = [row.as_dict() for row in rows]
+        return rows, payload, redactor
 
     def stop(self, timeout: float = 5.0) -> None:
         if not self._running.is_set():
@@ -255,8 +276,11 @@ class LexiFlowPipeline:
             else None,
         }
 
-    def digest(self, limit: Optional[int] = None):
+    def digest(self, limit: Optional[int] = None, rows: Optional[List[Any]] = None):
         """Extractive summary, keyphrases and topic shifts for the session so far."""
+        if rows is not None:
+            audio_seconds = sum(getattr(row, "audio_seconds", 0.0) for row in rows)
+            return self.analytics.digest([row.text for row in rows], audio_seconds)
         return self.store.digest(self.analytics, limit)
 
     def subscribe(self, listener: Callable[[str, Any], None]) -> Callable[[], None]:

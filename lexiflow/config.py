@@ -126,6 +126,17 @@ class TranslationConfig:
 
 
 @dataclass
+class RedactionConfig:
+    """Remove identifying detail before a transcript leaves the machine."""
+
+    enabled: bool = False
+    mode: str = "pseudonym"
+    kinds: tuple = ("email", "phone", "card", "iban", "ssn", "person")
+    salt: str = ""
+    redact_at_source: bool = False
+
+
+@dataclass
 class StateConfig:
     """Persistence and in-memory retention for the shared application state."""
 
@@ -146,6 +157,7 @@ class LexiFlowConfig:
     asr: ASRConfig = field(default_factory=ASRConfig)
     nlp: NLPConfig = field(default_factory=NLPConfig)
     translation: TranslationConfig = field(default_factory=TranslationConfig)
+    redaction: RedactionConfig = field(default_factory=RedactionConfig)
     state: StateConfig = field(default_factory=StateConfig)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -167,6 +179,7 @@ class LexiFlowConfig:
             "asr": ASRConfig,
             "nlp": NLPConfig,
             "translation": TranslationConfig,
+            "redaction": RedactionConfig,
             "state": StateConfig,
         }
         kwargs: Dict[str, Any] = {}
@@ -180,6 +193,8 @@ class LexiFlowConfig:
                 raw["database_path"] = Path(raw["database_path"])
             if klass is DiarizationConfig and raw.get("profile_path"):
                 raw["profile_path"] = Path(raw["profile_path"])
+            if klass is RedactionConfig and "kinds" in raw:
+                raw["kinds"] = tuple(raw["kinds"])
             kwargs[key] = klass(**raw)
         return cls(**kwargs)
 

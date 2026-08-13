@@ -206,9 +206,17 @@ def _digest_panel(pipeline: LexiFlowPipeline) -> None:
 
 
 def _download_row(pipeline: LexiFlowPipeline, digest) -> None:
-    rows = pipeline.store.transcript()
-    payload = pipeline.store.export()
-    stem = pipeline.store.session_name
+    scrub = st.checkbox(
+        "redact names and identifiers", key="redact-downloads", value=False
+    )
+    if scrub:
+        rows, payload, _ = pipeline.redacted()
+        stem = f"{pipeline.store.session_name}-redacted"
+        digest = pipeline.digest(rows=rows)
+    else:
+        rows = pipeline.store.transcript()
+        payload = pipeline.store.export()
+        stem = pipeline.store.session_name
     columns = st.columns(len(export.FORMATS))
     for column, fmt in zip(columns, sorted(export.FORMATS)):
         column.download_button(

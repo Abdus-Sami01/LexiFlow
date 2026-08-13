@@ -86,6 +86,7 @@ python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
 python -m lexiflow export --format srt --format md --output notes
 python -m lexiflow export --format srt --words --output captions
+python -m lexiflow redact "text to scrub"      # preview redaction
 python -m lexiflow translate pairs           # what can be translated offline right now
 python -m lexiflow translate install es-en   # one download, then never again
 python -m lexiflow translate session         # print a session with translations
@@ -184,8 +185,8 @@ segment length, silence hangover, noise floor adaptation, spectral gate threshol
 interval), `diarization` (similarity threshold, speaker cap, change-point splitting, saved
 voiceprints), `asr` (backend, model, threads, beam size, word timestamps, realtime-factor
 ceiling), `nlp` (which analyzers to enable, language detection, topic window, summary length),
-`translation` (on/off, target language, backend, whether to analyse the translation) and `state`
-(database path, retention).
+`translation` (on/off, target language, backend, whether to analyse the translation), `redaction`
+(on/off, mode, which kinds, redact at source) and `state` (database path, retention).
 
 Every advanced stage can be switched off independently. `segmenter.emit_partials = false` halves
 CPU use on a slow machine, `segmenter.spectral_gate = false` returns to plain energy gating,
@@ -205,6 +206,7 @@ the pipeline is unaffected.
 | `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
 | `lexiflow/pipeline.py` | — | orchestrator that owns the three threads and both queues |
 | `lexiflow/observability.py` | — | the counted, named record of every recovered failure |
+| `lexiflow/redaction.py` | — | pattern and entity driven scrubbing with stable pseudonyms |
 
 ## Tests
 
@@ -213,7 +215,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-173 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+201 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -222,8 +224,9 @@ model catalogue, the store's persistence and cross-session search, queue drainin
 deliberately slow backend, the terminal dashboard driven headlessly through its key bindings,
 the translation engine's caching, failure handling and fallback to analysing a translation,
 the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
-sheds frames without allocating, fault injection into the store, its listeners and its search, and
-full audio-to-insight passes through all three threads.
+sheds frames without allocating, fault injection into the store, its listeners and its search, every
+redaction mode and the leaks that regression-tested their way out of it, and full
+audio-to-insight passes through all three threads.
 
 ## When something goes wrong
 
@@ -239,6 +242,32 @@ exit. `--verbose` logs each one as it happens; `--quiet` keeps only hard errors.
 A database that cannot be opened at all downgrades the session to memory-only and says so, rather
 than taking the process down with it. Missing optional dependencies are not failures — they are
 reported as backend state (`entities: regex`) because that is what they are.
+
+## Redaction
+
+Recording locally is only half of privacy: a transcript can be pasted anywhere the moment it is
+exported. `redaction` removes the identifying parts first.
+
+```bash
+python -m lexiflow redact "Email Sarah Chen at sarah.chen@northwind.com or call 555 0142"
+# Email [PERSON_1] at [EMAIL_1] or call [PHONE_1]
+
+python -m lexiflow export --redact --format md --output shareable
+python -m lexiflow redact --kinds person,organization,email --mode label
+```
+
+Pseudonyms are stable for the life of a session, so `Sarah Chen` is `[PERSON_1]` in every line and
+the document still reads as a conversation rather than a wall of black boxes. Four modes:
+`pseudonym` (default), `label`, `mask` (█ blocks) and `hash` (salted, stable across sessions).
+
+Emails, phone numbers, cards, IBANs and SSNs come from patterns; people, organisations and
+locations come from the same entity extraction the analytics already run. The default set is
+`email, phone, card, iban, ssn, person` — organisation names are left alone because removing them
+usually destroys the meaning of the sentence, and `--kinds` opts them back in.
+
+Redaction applies at export by default, leaving the stored session intact. Set
+`redaction.redact_at_source = true` and nothing identifying is ever written to the database at
+all. Both dashboards can produce a redacted copy: a checkbox in Streamlit, `r` in the terminal.
 
 ## Offline guarantees
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from ..asr.engine import Utterance
 from ..nlp.pipeline import AnalyticsEngine
@@ -21,11 +21,13 @@ class AnalyticsConsumer(threading.Thread):
         store: SessionStore,
         source: "queue.Queue[Optional[Utterance]]",
         name: str = "lexiflow-analytics",
+        scrub: Optional[Callable[[str], str]] = None,
     ) -> None:
         super().__init__(name=name, daemon=True)
         self.engine = engine
         self.store = store
         self.source = source
+        self.scrub = scrub or (lambda text: text)
         self.error: Optional[BaseException] = None
         self.busy = False
         self._stop_event = threading.Event()
@@ -54,7 +56,7 @@ class AnalyticsConsumer(threading.Thread):
             record_failure("analytics", error)
             insight = None
         self.store.record(
-            utterance.text,
+            self.scrub(utterance.text),
             insight,
             started_at=utterance.started_at,
             ended_at=utterance.ended_at,

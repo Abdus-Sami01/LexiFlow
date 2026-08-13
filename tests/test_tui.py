@@ -70,3 +70,19 @@ async def test_tui_export_writes_markdown(tmp_path):
         await pilot.pause()
         written = list(tmp_path.glob("*.md"))
         assert written and "## Action items" in written[0].read_text()
+
+
+@pytest.mark.asyncio
+async def test_tui_exports_a_redacted_copy(tmp_path):
+    app = LexiFlowTUI(build_pipeline(tmp_path), refresh_seconds=10.0)
+    async with app.run_test() as pilot:
+        app.pipeline.config.redaction.enabled = True
+        app.pipeline.submit_text("Remind me to email Sarah Chen tomorrow.")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        written = list(tmp_path.glob("*-redacted.md"))
+        assert written
+        body = written[0].read_text()
+        assert "Sarah Chen" not in body
+        assert "[PERSON_1]" in body

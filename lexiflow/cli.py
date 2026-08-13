@@ -27,6 +27,7 @@ from .nlp.language import detect as detect_language_guess
 from .nlp.pipeline import AnalyticsEngine
 from .observability import FAILURES, configure_logging
 from .pipeline import LexiFlowPipeline
+from .redaction import build as build_redactor
 from .state.store import SessionStore
 
 
@@ -403,6 +404,8 @@ def command_export(args: argparse.Namespace) -> int:
         store.close()
         return 1
 
+    if args.redact:
+        config.redaction.enabled = True
     actions = store.load_actions(session_id)
     info = store.session_info(session_id)
     payload = {
@@ -413,6 +416,12 @@ def command_export(args: argparse.Namespace) -> int:
         "speakers": _speaker_rows(rows),
         "entities": {},
     }
+    if config.redaction.enabled:
+        redactor = build_redactor(config.redaction, analytics.entities)
+        rows = redactor.redact_rows(rows)
+        payload = redactor.redact_payload(payload)
+        payload["transcript"] = [row.as_dict() for row in rows]
+
     digest = analytics.digest([row.text for row in rows])
 
     formats = args.format or ["md"]
@@ -514,6 +523,43 @@ def command_translate(args: argparse.Namespace) -> int:
         if rendered:
             print(f"   -> {rendered}")
     print(f"\n{json.dumps(engine.stats(), indent=2)}")
+    store.close()
+    return 0
+
+
+def command_redact(args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    config.redaction.enabled = True
+    if args.mode:
+        config.redaction.mode = args.mode
+    if args.kinds:
+        config.redaction.kinds = tuple(args.kinds.split(","))
+
+    analytics = AnalyticsEngine(config.nlp, config.translation)
+    redactor = build_redactor(config.redaction, analytics.entities)
+
+    if args.text:
+        result = redactor.redact(args.text)
+        print(result.text)
+        if result.changed:
+            print(f"\nremoved: {json.dumps(result.counts())}", file=sys.stderr)
+        return 0
+
+    store = SessionStore(config.state)
+    session_id = args.session or store.latest_session_with_transcript()
+    if not session_id:
+        print("no recorded session has a transcript", file=sys.stderr)
+        store.close()
+        return 1
+
+    rows = store.load_session(session_id)
+    tally: dict = {}
+    for row in rows:
+        result = redactor.redact(row["text"])
+        print(result.text)
+        for kind, count in result.counts().items():
+            tally[kind] = tally.get(kind, 0) + count
+    print(f"\nremoved: {json.dumps(tally)}", file=sys.stderr)
     store.close()
     return 0
 
@@ -718,6 +764,9 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument(
         "--translated", action="store_true", help="use the translation as the subtitle text"
     )
+    export_parser.add_argument(
+        "--redact", action="store_true", help="replace names and identifiers with pseudonyms"
+    )
     export_parser.set_defaults(handler=command_export)
 
     translate_parser = subparsers.add_parser(
@@ -731,6 +780,15 @@ def build_parser() -> argparse.ArgumentParser:
     translate_parser.add_argument("--target", help="target language, defaults to en")
     translate_parser.add_argument("--session", help="session id, defaults to the most recent")
     translate_parser.set_defaults(handler=command_translate)
+
+    redact_parser = subparsers.add_parser(
+        "redact", help="preview a session or a line with identifying detail removed"
+    )
+    redact_parser.add_argument("text", nargs="?", help="a line to scrub; omit to use a session")
+    redact_parser.add_argument("--session", help="session id, defaults to the most recent")
+    redact_parser.add_argument("--mode", choices=["pseudonym", "label", "mask", "hash"])
+    redact_parser.add_argument("--kinds", help="comma separated, e.g. person,email,phone")
+    redact_parser.set_defaults(handler=command_redact)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)
