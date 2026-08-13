@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from ..observability import record_failure
+
 PRE_EMPHASIS = 0.97
 FRAME_LENGTH_MS = 25
 FRAME_STRIDE_MS = 10
@@ -236,7 +238,8 @@ class SpeakerTracker:
             return 0
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as error:
+            record_failure("speaker.profiles", error, path=str(target))
             return 0
         restored = 0
         with self._lock:

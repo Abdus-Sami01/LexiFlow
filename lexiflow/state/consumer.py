@@ -8,6 +8,7 @@ from typing import Optional
 
 from ..asr.engine import Utterance
 from ..nlp.pipeline import AnalyticsEngine
+from ..observability import record_failure
 from .store import SessionStore
 
 
@@ -49,7 +50,8 @@ class AnalyticsConsumer(threading.Thread):
             return
         try:
             insight = self.engine.analyse(utterance.text, utterance.translation)
-        except Exception:
+        except Exception as error:
+            record_failure("analytics", error)
             insight = None
         self.store.record(
             utterance.text,

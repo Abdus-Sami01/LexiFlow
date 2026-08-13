@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from ..config import TranslationConfig
+from ..observability import record_failure
 
 _REGISTRY: Dict[str, type] = {}
 
@@ -204,7 +205,8 @@ class TranslationEngine:
         started = time.perf_counter()
         try:
             rendered = self.translator.translate(cleaned, source, destination)
-        except Exception:
+        except Exception as error:
+            record_failure("translate", error, pair=f"{source}->{destination}")
             self.failures += 1
             return None
         elapsed = (time.perf_counter() - started) * 1000.0

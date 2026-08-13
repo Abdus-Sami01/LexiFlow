@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
+from ..observability import get_logger
+
 INTERESTING_LABELS = {
     "PERSON": "person",
     "ORG": "organization",
@@ -63,7 +65,8 @@ def _load_spacy(model_name: str):
         return None
     try:
         return spacy.load(model_name, disable=["lemmatizer", "textcat"])
-    except Exception:
+    except Exception as error:
+        get_logger("entities").debug("spacy model %s unavailable: %s", model_name, error)
         return None
 
 

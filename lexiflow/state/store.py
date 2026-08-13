@@ -14,6 +14,7 @@ from typing import Any, Callable, Deque, Dict, Iterable, List, Optional
 
 from ..config import StateConfig
 from ..nlp.pipeline import Insight
+from ..observability import record_failure
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -175,8 +176,15 @@ class SessionStore:
         return Path(self.config.database_path)
 
     def _initialise_database(self) -> None:
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = self._connection()
+        """A database we cannot open disables persistence rather than the session."""
+        try:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            connection = self._connection()
+        except (OSError, sqlite3.Error) as error:
+            record_failure("store.open", error, path=str(self.database_path))
+            self.config.persist = False
+            return
+
         with connection:
             connection.executescript(SCHEMA)
             try:
@@ -215,7 +223,8 @@ class SessionStore:
         for listener in list(self._listeners):
             try:
                 listener(event, payload)
-            except Exception:
+            except Exception as error:
+                record_failure("store.listener", error)
                 continue
 
     def record(self, text: str, insight: Optional[Insight] = None, **kwargs: Any) -> TranscriptItem:
@@ -290,8 +299,8 @@ class SessionStore:
         return item
 
     def _persist(self, item: TranscriptItem, insight: Optional[Insight]) -> None:
-        connection = self._connection()
         try:
+            connection = self._connection()
             with connection:
                 connection.execute(
                     "INSERT INTO transcript(session_id, seq, text, started_at, ended_at, backend,"
@@ -363,8 +372,8 @@ class SessionStore:
                             for entity in insight.entities
                         ],
                     )
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as error:
+            record_failure("store.persist", error, seq=item.seq)
 
     def toggle_action(self, identifier: str, done: Optional[bool] = None) -> Optional[ActionItem]:
         with self._lock:
@@ -382,8 +391,8 @@ class SessionStore:
                         "UPDATE action_items SET done=? WHERE id=?",
                         (1 if snapshot.done else 0, identifier),
                     )
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as error:
+                record_failure("store.toggle_action", error, action=identifier)
         self._emit("action", snapshot)
         return snapshot
 
@@ -483,8 +492,8 @@ class SessionStore:
                 ).fetchall()
                 if rows:
                     return [{"seq": row["seq"], "text": row["text"]} for row in rows]
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as error:
+                record_failure("store.search", error)
 
         lowered = needle.lower()
         with self._lock:
@@ -500,8 +509,8 @@ class SessionStore:
         needle = (query or "").strip()
         if not needle or not self.config.persist:
             return []
-        connection = self._connection()
         try:
+            connection = self._connection()
             if self._fts_enabled:
                 rows = connection.execute(
                     "SELECT f.seq, f.text, f.session_id, s.name FROM transcript_fts f"
@@ -516,7 +525,8 @@ class SessionStore:
                     " WHERE t.text LIKE ? ORDER BY t.id DESC LIMIT ?",
                     (f"%{needle}%", limit),
                 ).fetchall()
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.search_all_sessions", error)
             return []
         return [
             {
@@ -539,7 +549,8 @@ class SessionStore:
                 " GROUP BY s.id ORDER BY s.started_at DESC LIMIT 1",
                 (self.session_id, 1 if exclude_current else 0),
             ).fetchone()
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.latest_session", error)
             return None
         return row["id"] if row else None
 
@@ -553,7 +564,8 @@ class SessionStore:
                 " FROM transcript WHERE session_id = ? ORDER BY seq LIMIT ?",
                 (session_id, limit),
             ).fetchall()
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.load_session", error, session=session_id)
             return []
         return [dict(row) for row in rows]
 
@@ -576,8 +588,8 @@ class SessionStore:
                         "UPDATE transcript SET speaker=? WHERE session_id=? AND speaker=?",
                         (name, self.session_id, label),
                     )
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as error:
+                record_failure("store.rename_speaker", error, speaker=label)
         self._emit("speaker", {"from": label, "to": name, "lines": touched})
         return touched
 
@@ -591,7 +603,8 @@ class SessionStore:
                 " FROM action_items WHERE session_id = ? ORDER BY priority DESC, created_at",
                 (session_id,),
             ).fetchall()
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.load_actions", error, session=session_id)
             return []
         return [{**dict(row), "done": bool(row["done"])} for row in rows]
 
@@ -603,7 +616,8 @@ class SessionStore:
                 "SELECT id, name, started_at, ended_at FROM sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.session_info", error, session=session_id)
             row = None
         return dict(row) if row else {"id": session_id, "name": session_id}
 
@@ -652,7 +666,8 @@ class SessionStore:
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
-        except sqlite3.Error:
+        except sqlite3.Error as error:
+            record_failure("store.past_sessions", error)
             return []
 
     def close(self) -> None:
@@ -665,8 +680,8 @@ class SessionStore:
                         (time.time(), self.session_id),
                     )
                 connection.close()
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as error:
+                record_failure("store.close", error)
             self._local.connection = None
 
     def seed(self, lines: Iterable[str], analytics) -> None:

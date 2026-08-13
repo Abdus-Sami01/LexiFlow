@@ -264,6 +264,13 @@ def main() -> None:
     if errors:
         st.error("\n".join(errors))
 
+    failures = snapshot.get("failures") or {}
+    if failures.get("total"):
+        counts = ", ".join(f"{name} x{count}" for name, count in failures["by_component"].items())
+        with st.expander(f"{failures['total']} recovered failure(s) · {counts}"):
+            for item in reversed(failures["recent"]):
+                st.caption(f"{item['component']} · {item['kind']}: {item['message']}")
+
     if pipeline.is_running:
         time.sleep(REFRESH_SECONDS)
         st.rerun()

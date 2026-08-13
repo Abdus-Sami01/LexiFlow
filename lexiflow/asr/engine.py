@@ -11,6 +11,7 @@ from typing import List, Optional
 from ..audio.segmenter import SpeechSegment
 from ..audio.speaker import SpeakerTracker
 from ..config import ASRConfig, DiarizationConfig, TranslationConfig
+from ..observability import record_failure
 from .backends import TranscriptionResult, WhisperBackend, create_backend
 
 
@@ -152,7 +153,8 @@ class TranscriptionEngine:
                 translated = self.backend.transcribe(
                     segment.audio, segment.sample_rate, task="translate"
                 )
-        except Exception:
+        except Exception as error:
+            record_failure("asr.translate", error)
             self.stats.errors += 1
             return None, None
 
@@ -227,7 +229,8 @@ class TranscriptionConsumer(threading.Thread):
                 self.busy = True
                 try:
                     utterance = self.engine.transcribe_segment(segment)
-                except Exception:
+                except Exception as error:
+                    record_failure("asr.transcribe", error)
                     self.engine.stats.errors += 1
                     continue
                 finally:

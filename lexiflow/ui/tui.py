@@ -44,7 +44,7 @@ class LexiFlowTUI(App):
         scrollbar-size-horizontal: 0;
         scrollbar-size-vertical: 0;
     }
-    #metrics { height: 11; border: round $secondary; }
+    #metrics { height: 12; border: round $secondary; }
     #actions { height: 1fr; border: round $warning; }
     #partial { height: auto; color: $text-muted; padding: 0 1; }
     Input { dock: bottom; }
@@ -98,6 +98,7 @@ class LexiFlowTUI(App):
             "asr rtf",
             "nlp latency",
             "keeping up",
+            "failures",
         ):
             table.add_row(name, "-", key=name)
         self.query_one("#transcript", RichLog).focus()
@@ -132,6 +133,7 @@ class LexiFlowTUI(App):
             "asr rtf": f"{health['asr_realtime_factor']:.2f}x",
             "nlp latency": f"{health['analytics_average_ms']:.2f} ms",
             "keeping up": "yes" if health.get("keeping_up", True) else "falling behind",
+            "failures": str(health.get("failures", 0)),
         }
         table = self.query_one("#metrics", DataTable)
         for name, value in values.items():

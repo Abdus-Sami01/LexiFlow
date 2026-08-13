@@ -5,7 +5,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -16,6 +16,7 @@ from .audio.capture import MicrophoneStream, SegmentProducer
 from .audio.segmenter import SpeechSegment
 from .config import LexiFlowConfig
 from .nlp.pipeline import AnalyticsEngine
+from .observability import FAILURES, record_failure
 from .state.consumer import AnalyticsConsumer
 from .state.store import SessionStore
 
@@ -37,6 +38,8 @@ class PipelineHealth:
     speech_translations: int
     keeping_up: bool
     errors: List[str]
+    failures: int = 0
+    failures_by_component: Dict[str, int] = field(default_factory=dict)
 
 
 class LexiFlowPipeline:
@@ -131,8 +134,8 @@ class LexiFlowPipeline:
             return
         try:
             self.transcription.speakers.save(path)
-        except OSError:
-            pass
+        except OSError as error:
+            record_failure("pipeline.speaker_profiles", error, path=str(path))
 
     def rename_speaker(self, label: str, name: str) -> bool:
         """Enrol a cluster under a real name and keep it for the next session."""
@@ -228,6 +231,8 @@ class LexiFlowPipeline:
             else 0,
             speech_translations=self.transcription.stats.speech_translations,
             errors=errors,
+            failures=FAILURES.total,
+            failures_by_component=FAILURES.counts(),
         )
 
     def snapshot(self, transcript_limit: int = 200) -> Dict[str, Any]:
@@ -244,6 +249,7 @@ class LexiFlowPipeline:
             "speakers": self.store.speakers(),
             "topics": self.store.topics(),
             "partial": self.store.partial(),
+            "failures": FAILURES.summary(),
             "translation": self.analytics.translator.stats()
             if self.analytics.translator
             else None,

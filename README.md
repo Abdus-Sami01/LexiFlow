@@ -204,6 +204,7 @@ the pipeline is unaffected.
 | `lexiflow/ui/` | 5 | Streamlit dashboard and Textual terminal dashboard |
 | `lexiflow/export.py` | — | srt, vtt, txt, markdown and json writers |
 | `lexiflow/pipeline.py` | — | orchestrator that owns the three threads and both queues |
+| `lexiflow/observability.py` | — | the counted, named record of every recovered failure |
 
 ## Tests
 
@@ -212,7 +213,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-161 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+173 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -221,7 +222,23 @@ model catalogue, the store's persistence and cross-session search, queue drainin
 deliberately slow backend, the terminal dashboard driven headlessly through its key bindings,
 the translation engine's caching, failure handling and fallback to analysing a translation,
 the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
-sheds frames without allocating, and full audio-to-insight passes through all three threads.
+sheds frames without allocating, fault injection into the store, its listeners and its search, and
+full audio-to-insight passes through all three threads.
+
+## When something goes wrong
+
+Every stage is built to survive a fault: a failed SQLite write must not kill the microphone
+thread, and a translator that throws must not lose the transcript. That used to be spelled
+`except: pass`, which meant a full disk at minute forty looked exactly like a healthy session.
+
+Those failures are still swallowed, but now they are counted and named. `pipeline.health()`
+carries `failures` and `failures_by_component`, both dashboards show a panel when the count is
+non-zero, `doctor` prints the running total, and the CLI writes a one-line summary to stderr on
+exit. `--verbose` logs each one as it happens; `--quiet` keeps only hard errors.
+
+A database that cannot be opened at all downgrades the session to memory-only and says so, rather
+than taking the process down with it. Missing optional dependencies are not failures — they are
+reported as backend state (`entities: regex`) because that is what they are.
 
 ## Offline guarantees
 

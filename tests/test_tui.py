@@ -23,7 +23,7 @@ async def test_tui_boots_and_renders_metrics(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         table = app.query_one("#metrics")
-        assert table.row_count == 8
+        assert table.row_count == 9
         assert table.get_cell("utterances", app._metric_column) == "0"
 
 

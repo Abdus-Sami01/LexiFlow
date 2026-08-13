@@ -25,6 +25,7 @@ from .config import LexiFlowConfig
 from .nlp import translate as translation_module
 from .nlp.language import detect as detect_language_guess
 from .nlp.pipeline import AnalyticsEngine
+from .observability import FAILURES, configure_logging
 from .pipeline import LexiFlowPipeline
 from .state.store import SessionStore
 
@@ -110,6 +111,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     survey = translation_module.report(config.translation)
     print(f"{'translators':<17}: {', '.join(survey.available)}")
     print(f"{'language pairs':<17}: {', '.join(survey.pairs) or 'none installed'}")
+    print(f"{'recovered fails':<17}: {FAILURES.total}")
     try:
         devices = list_input_devices()
         print(f"input devices    : {len(devices)}")
@@ -181,6 +183,10 @@ def command_run(args: argparse.Namespace) -> int:
         pipeline.stop()
         health = pipeline.health()
         print(json.dumps(health.__dict__, indent=2))
+        if health.failures:
+            print("\nrecovered failures:", file=sys.stderr)
+            for item in FAILURES.recent(5):
+                print(f"  {item}", file=sys.stderr)
         if args.digest:
             print()
             print(pipeline.digest().as_markdown())
@@ -644,6 +650,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lexiflow", description=__doc__)
     parser.add_argument("--version", action="version", version=f"lexiflow {__version__}")
     parser.add_argument("--config", help="path to a JSON config file")
+    parser.add_argument("--verbose", action="store_true", help="log every recovered failure")
+    parser.add_argument("--quiet", action="store_true", help="only log hard errors")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     doctor = subparsers.add_parser("doctor", help="report hardware, backends and devices")
@@ -747,7 +755,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return int(args.handler(args))
+    configure_logging(verbose=args.verbose, quiet=args.quiet)
+    status = int(args.handler(args))
+    if FAILURES.total and not args.quiet:
+        print(
+            f"\n{FAILURES.total} recovered failure(s): "
+            + ", ".join(f"{name} x{count}" for name, count in FAILURES.counts().items()),
+            file=sys.stderr,
+        )
+    return status
 
 
 if __name__ == "__main__":
