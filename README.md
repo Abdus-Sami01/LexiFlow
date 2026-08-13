@@ -80,7 +80,7 @@ python -m lexiflow replay meeting.wav --model base.en   # drains the queue befor
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
 python -m lexiflow tui                 # terminal dashboard, no browser
-python -m lexiflow bench               # analytics latency
+python -m lexiflow bench               # time every stage, --json for machine output
 python -m lexiflow sessions            # list everything recorded so far
 python -m lexiflow search "budget"     # full-text search across every session
 python -m lexiflow digest              # summarise the most recent session
@@ -150,6 +150,27 @@ eval "$(python -m lexiflow build)"
 bash whisper.cpp/models/download-ggml-model.sh base.en
 ```
 
+## Measured cost
+
+`python -m lexiflow bench` times every stage the project owns. On the CI-class Linux box these
+numbers came from (4 cores, no GPU, `--iterations 20`):
+
+| stage | cost | |
+| --- | --- | --- |
+| `ring buffer write` | 0.022 ms | per 30 ms block |
+| `ring buffer read` | 0.002 ms | per 30 ms block |
+| `resample 44.1k->16k` | 0.220 ms | per 2 s of audio |
+| `spectral gate` | 0.072 ms | per frame |
+| `segmenter` | 0.128 ms | per 30 ms block |
+| `mfcc + embedding` | 2.510 ms | per 2 s utterance |
+| `analytics` | 0.096 ms | per line |
+| `digest` | 0.463 ms | per session |
+
+Everything except the Whisper model costs about **0.6% of one core** in realtime terms: 0.47% for
+the capture path and 0.12% for diarization. The model is the entire budget, which is why the
+choice of model, not this code, decides whether you keep up. `--json` emits the same numbers for
+tracking over time.
+
 ## Configuration
 
 Every knob lives in `lexiflow/config.py` and can be loaded from JSON:
@@ -191,15 +212,32 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-151 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+161 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
 topic drift, filler compression, subtitle cue timing from backend spans, every export format, the
 model catalogue, the store's persistence and cross-session search, queue draining against a
 deliberately slow backend, the terminal dashboard driven headlessly through its key bindings,
-the translation engine's caching, failure handling and fallback to analysing a translation, and
-full audio-to-insight passes through all three threads.
+the translation engine's caching, failure handling and fallback to analysing a translation,
+the offline guarantees above, a paced two-minute soak that loses nothing and an overload soak that
+sheds frames without allocating, and full audio-to-insight passes through all three threads.
+
+## Offline guarantees
+
+"Local" is a claim worth testing rather than asserting, so the suite tests it:
+
+- Every outbound socket call is monkeypatched to raise, then a full audio-to-insight run, the
+  analytics layer in three languages, all five export formats and both search paths are exercised.
+  Any accidental network call fails the test rather than passing quietly.
+- With `state.persist = false` the state directory stays completely empty.
+- No audio file of any format is ever produced, even mid-stream.
+- The ring buffer's allocation is checked to be identical after 60 utterances of overload, and it
+  sheds frames instead of growing.
+- Transcript retention is capped, so a session that runs all day cannot exhaust memory.
+
+The only network access anywhere in the project is explicit and one-off: `models get` downloading
+Whisper weights and `translate install` downloading a language pair. Neither runs unless you ask.
 
 ## Limitations
 

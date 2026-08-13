@@ -17,7 +17,10 @@ from . import __version__, export
 from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
-from .audio.conversion import prepare_for_whisper
+from .audio.conversion import looks_like_speech, prepare_for_whisper, resample_linear
+from .audio.ring_buffer import AudioRingBuffer
+from .audio.segmenter import SpeechSegmenter
+from .audio.speaker import voice_embedding
 from .config import LexiFlowConfig
 from .nlp import translate as translation_module
 from .nlp.language import detect as detect_language_guess
@@ -548,26 +551,92 @@ def command_tui(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_bench(args: argparse.Namespace) -> int:
-    config = _load_config(args.config)
-    analytics = AnalyticsEngine(config.nlp)
-    corpus = DEMO_LINES * max(1, args.iterations)
+def _timed(label: str, work, iterations: int, unit: str = "call") -> dict:
+    work()
     started = time.perf_counter()
-    for line in corpus:
-        analytics.analyse(line)
+    for _ in range(iterations):
+        work()
     elapsed = time.perf_counter() - started
-    print(f"lines            : {len(corpus)}")
-    print(f"total            : {elapsed * 1000:.1f} ms")
-    print(f"per line         : {elapsed / len(corpus) * 1000:.3f} ms")
-    print(f"entity backend   : {analytics.entities.backend}")
-    print(f"sentiment engine : {analytics.backends['sentiment']}")
+    return {
+        "stage": label,
+        "iterations": iterations,
+        "per_call_ms": elapsed / iterations * 1000.0,
+        "unit": unit,
+    }
+
+
+def command_bench(args: argparse.Namespace) -> int:
+    """Measure every stage we own; the model itself is the backend's business."""
+    config = _load_config(args.config)
+    analytics = AnalyticsEngine(config.nlp, config.translation)
+    iterations = max(1, args.iterations)
+    rate = config.audio.target_sample_rate
+
+    times = np.arange(rate * 2) / rate
+    speech = (
+        sum(np.sin(2 * np.pi * 150 * k * times) / k for k in range(1, 12)) * 0.2
+    ).astype(np.float32)
+    block = speech[: config.audio.block_size]
+
+    buffer = AudioRingBuffer(rate * 30)
+    segmenter = SpeechSegmenter(config.segmenter, rate)
+
+    rows = [
+        _timed("ring buffer write", lambda: buffer.write(block), iterations * 20, "block"),
+        _timed("ring buffer read", lambda: buffer.read(block.size), iterations * 20, "block"),
+        _timed(
+            "resample 44.1k->16k",
+            lambda: resample_linear(speech, 44_100, rate),
+            max(1, iterations // 2),
+            "2s",
+        ),
+        _timed("spectral gate", lambda: looks_like_speech(block, rate), iterations * 20, "frame"),
+        _timed("segmenter", lambda: list(segmenter.push(block)), iterations * 20, "block"),
+        _timed("mfcc + embedding", lambda: voice_embedding(speech, rate), iterations, "2s"),
+        _timed(
+            "analytics",
+            lambda: analytics.analyse(DEMO_LINES[0]),
+            iterations * len(DEMO_LINES),
+            "line",
+        ),
+        _timed(
+            "digest",
+            lambda: analytics.digest(DEMO_LINES, 60.0),
+            max(1, iterations // 5),
+            "session",
+        ),
+    ]
 
     if args.asr:
         backend = ScriptedBackend(["benchmark"], config.asr).load()
-        noise = np.random.default_rng(0).normal(0, 0.05, 16_000 * 5).astype(np.float32)
-        started = time.perf_counter()
-        backend.transcribe(noise)
-        print(f"asr scripted pass: {(time.perf_counter() - started) * 1000:.2f} ms")
+        rows.append(
+            _timed("scripted asr", lambda: backend.transcribe(speech), iterations, "2s")
+        )
+
+    if args.json:
+        print(json.dumps({"stages": rows, "backends": analytics.backends}, indent=2))
+        return 0
+
+    print(f"{'stage':<22}{'per call':>12}   {'unit':<8}iterations")
+    for row in rows:
+        print(
+            f"{row['stage']:<22}{row['per_call_ms']:>9.3f} ms   "
+            f"{row['unit']:<8}{row['iterations']}"
+        )
+    print()
+    by_stage = {row["stage"]: row["per_call_ms"] for row in rows}
+    block_ms = config.audio.block_duration_ms
+    per_block = (
+        by_stage["ring buffer write"] + by_stage["ring buffer read"] + by_stage["segmenter"]
+    )
+    capture_share = per_block / block_ms * 100.0
+    diarization_share = by_stage["mfcc + embedding"] / 2000.0 * 100.0
+
+    print(f"entity backend   : {analytics.entities.backend}")
+    print(f"sentiment engine : {analytics.backends['sentiment']}")
+    print(f"capture path     : {capture_share:.2f}% of realtime (buffer + gate + segmenter)")
+    print(f"diarization      : {diarization_share:.2f}% of realtime")
+    print(f"everything but the model: {capture_share + diarization_share:.2f}% of one core")
     return 0
 
 
@@ -669,6 +738,7 @@ def build_parser() -> argparse.ArgumentParser:
     bench = subparsers.add_parser("bench", help="measure analytics latency")
     bench.add_argument("--iterations", type=int, default=25)
     bench.add_argument("--asr", action="store_true")
+    bench.add_argument("--json", action="store_true")
     bench.set_defaults(handler=command_bench)
 
     return parser
