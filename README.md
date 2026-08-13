@@ -70,6 +70,8 @@ backend, and without spaCy or vaderSentiment the bundled regex and lexicon paths
 ## Use
 
 ```bash
+python -m lexiflow setup               # pick a model for this machine, fetch it, prove it works
+python -m lexiflow selftest            # run the real model over known audio, --json for CI
 python -m lexiflow init                # write lexiflow.json with every default
 python -m lexiflow validate            # check a config before you rely on it
 python -m lexiflow doctor              # hardware, backends, devices
@@ -107,6 +109,19 @@ untranslated original, and nothing leaves the machine.
 `--model` takes either a catalogue name (`base.en`) or a path to a `.bin`. Names resolve against
 `~/.lexiflow/models`, overridable with `LEXIFLOW_MODELS`; a missing model tells you the exact
 command to fetch it instead of failing deep inside the backend.
+
+The catalogue ships ggml weights, which is what the whisper.cpp backends read. `faster_whisper` is
+the odd one out: it wants a CTranslate2 directory, so point `asr.model_path` at one rather than at
+a `.bin`. It would otherwise fetch weights over the network on first load, which the offline
+promise does not allow, so that download is refused unless you set `asr.allow_downloads = true`.
+
+Nothing in the test suite can tell you whether the real model keeps up on your hardware, because
+the suite runs against a scripted backend. `selftest` answers that: it pushes known two-speaker
+audio through the whole three-thread pipeline with the real weights loaded, then reports hardware,
+backend, model load, realtime factor, diarization, analytics and all five export formats. It exits
+non-zero on a genuine failure and warns rather than fails on anything it cannot measure, so it
+works as a post-install check and as a CI gate. `setup` is the same thing with the download in
+front of it.
 
 Exports cover `srt`, `vtt`, `txt`, `md` and `json`. `--words` emits one cue per word wherever the
 backend gave word timings, otherwise it falls back to segment timings. Subtitle cues are made monotonic and
