@@ -79,6 +79,7 @@ python -m lexiflow build               # tuned whisper.cpp build command for thi
 python -m lexiflow devices             # list input devices
 python -m lexiflow run --model base.en
 python -m lexiflow replay meeting.wav --model base.en   # drains the queue before exit
+python -m lexiflow batch ./recordings --model base.en   # a whole folder, resumable
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
 python -m lexiflow tui                 # terminal dashboard, no browser
@@ -219,6 +220,7 @@ the pipeline is unaffected.
 | `lexiflow/observability.py` | — | the counted, named record of every recovered failure |
 | `lexiflow/redaction.py` | — | pattern and entity driven scrubbing with stable pseudonyms |
 | `lexiflow/insights.py` | — | cross-session review: open items, recurring themes, trends |
+| `lexiflow/batch.py` | — | folder-at-a-time processing with a resumable manifest |
 
 ## Tests
 
@@ -227,7 +229,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-254 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
+277 tests cover the ring buffer, resampling, segmentation, the spectral gate against real noise
 and rumble, partial emission and the realtime-factor governor, every rule family in four
 languages, language detection and its refusal to guess, sentiment negation and momentum, the MFCC
 frontend, speaker clustering, change-point splitting and voiceprint round-trips, TextRank, RAKE,
@@ -239,7 +241,8 @@ the offline guarantees above, a paced two-minute soak that loses nothing and an 
 sheds frames without allocating, fault injection into the store, its listeners and its search, every
 redaction mode and the leaks that regression-tested their way out of it, config validation and
 round-tripping, cross-session aggregation over a seeded three-meeting history, BM25
-ranking and its FTS-less fallback, and full audio-to-insight passes through all three threads.
+ranking and its FTS-less fallback, batch processing over a folder including resume and a corrupt
+file, and full audio-to-insight passes through all three threads.
 
 ## When something goes wrong
 
@@ -255,6 +258,22 @@ exit. `--verbose` logs each one as it happens; `--quiet` keeps only hard errors.
 A database that cannot be opened at all downgrades the session to memory-only and says so, rather
 than taking the process down with it. Missing optional dependencies are not failures — they are
 reported as backend state (`entities: regex`) because that is what they are.
+
+## A backlog of recordings
+
+Live capture is the demo; a folder of recordings is usually the job.
+
+```bash
+python -m lexiflow batch ./recordings --model base.en --format md --format srt
+python -m lexiflow batch ./recordings --workers 4 --redact --output ./notes
+```
+
+Every `.wav` under the path becomes its own session and its own set of notes, named after the
+file. A manifest records what was processed, so an interrupted run resumes where it stopped
+instead of redoing everything, and adding a recording later only processes that one. A corrupt
+file fails on its own and the batch carries on — the exit code is non-zero if anything failed, and
+the manifest says which. `--workers` runs several recordings at once, each with its own pipeline
+and model instance, so raise it only if you have the memory for it.
 
 ## Search
 

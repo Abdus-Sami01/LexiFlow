@@ -14,6 +14,7 @@ from typing import List, Optional
 import numpy as np
 
 from . import __version__, export, insights
+from . import batch as batch_module
 from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
@@ -636,6 +637,57 @@ def command_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_batch(args: argparse.Namespace) -> int:
+    """Turn a folder of recordings into one set of notes per recording."""
+    config = _load_config(args.config)
+    problem = _apply_model(config, args.model)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    if args.backend:
+        config.asr.backend = args.backend
+    if args.redact:
+        config.redaction.enabled = True
+
+    target = Path(args.path)
+    if not target.exists():
+        print(f"{target} does not exist", file=sys.stderr)
+        return 1
+
+    sources = batch_module.discover(target)
+    if not sources:
+        print(f"no .wav files under {target}", file=sys.stderr)
+        return 1
+    print(f"{len(sources)} recording(s) to process")
+
+    def announce(job: batch_module.BatchJob) -> None:
+        name = Path(job.source).name
+        if job.status == "skipped":
+            print(f"  skip  {name}")
+        elif job.status == "done":
+            print(
+                f"  done  {name} · {job.utterances} utterances · "
+                f"{job.actions} items · {job.realtime_factor:.2f}x"
+            )
+        else:
+            print(f"  fail  {name}: {job.error}", file=sys.stderr)
+
+    runner = batch_module.BatchRunner(
+        config=config,
+        formats=args.format or ["md"],
+        output=Path(args.output),
+        workers=args.workers,
+        resume=not args.no_resume,
+        on_progress=announce,
+    )
+    report = runner.run(target)
+
+    print()
+    print(report.as_text())
+    print(f"manifest: {runner.manifest_path}")
+    return 1 if report.failed else 0
+
+
 def command_dashboard(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import cli as streamlit_cli
@@ -879,6 +931,17 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--people", type=int, default=8)
     review.add_argument("--json", action="store_true")
     review.set_defaults(handler=command_review)
+
+    batch = subparsers.add_parser("batch", help="process a folder of recordings")
+    batch.add_argument("path", help="a .wav file or a directory of them")
+    batch.add_argument("--output", default="lexiflow-notes")
+    batch.add_argument("--format", action="append", choices=sorted(export.FORMATS))
+    batch.add_argument("--workers", type=int, default=1)
+    batch.add_argument("--model")
+    batch.add_argument("--backend")
+    batch.add_argument("--redact", action="store_true")
+    batch.add_argument("--no-resume", action="store_true", help="reprocess everything")
+    batch.set_defaults(handler=command_batch)
 
     dashboard = subparsers.add_parser("dashboard", help="launch the Streamlit dashboard")
     dashboard.add_argument("--port", type=int, default=8501)

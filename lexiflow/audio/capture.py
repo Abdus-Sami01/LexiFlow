@@ -222,11 +222,12 @@ class SegmentProducer(threading.Thread):
     def run(self) -> None:
         try:
             for segment in self.stream.segments(self.segmenter_config):
-                if self._stop_event.is_set():
-                    break
                 if segment.is_final:
                     for part in self._maybe_split(segment):
                         self.output.put(part)
+                    continue
+                if self._stop_event.is_set():
+                    self.dropped_partials += 1
                     continue
                 if self.partial_gate is not None and not self.partial_gate():
                     self.dropped_partials += 1

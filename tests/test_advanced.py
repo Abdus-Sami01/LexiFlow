@@ -331,3 +331,20 @@ def test_drain_reports_false_when_it_times_out(config):
         pipeline.feed(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
     assert pipeline.drain(timeout=0.2) is False
     pipeline.close()
+
+
+def test_the_last_utterance_survives_a_stop(config):
+    """Regression: the flushed tail was dropped, losing whatever was said last."""
+    config.segmenter.emit_partials = False
+    backend = ScriptedBackend(["the very last thing said"], config.asr)
+    pipeline = LexiFlowPipeline(config, backend=backend)
+    pipeline.start(open_microphone=False)
+
+    pipeline.feed(synthetic_voice(150, seconds=2.0, seed=31))
+    assert pipeline.drain(timeout=5.0) is True
+    pipeline.stop()
+
+    transcript = pipeline.store.transcript()
+    assert transcript, "the trailing utterance was dropped on stop"
+    assert transcript[-1].text == "the very last thing said"
+    pipeline.close()
