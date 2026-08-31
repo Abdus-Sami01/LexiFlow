@@ -50,6 +50,8 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   no longer opens a segment the way a plain energy threshold would.
 - Keeps the microphone, inference and analytics on three isolated threads joined by bounded queues,
   so a slow transcription pass can never drop audio.
+- Exposes the whole engine as a loopback JSON API with a server-sent event stream, built on the
+  standard library alone, so an editor plugin or a shell script can read and drive a live session.
 - Ships two dashboards over the same engine: a Streamlit one with a live transcript, action-item
   checklist, sentiment timeline, speaker share bars, topic-shift log, digest and cross-session
   search, and a Textual one for the terminal with the same panels on single-key bindings.
@@ -85,6 +87,7 @@ python -m lexiflow replay meeting.wav --model base.en   # drains the queue befor
 python -m lexiflow batch ./recordings --model base.en   # a whole folder, resumable
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
 python -m lexiflow dashboard           # Streamlit UI on :8501
+python -m lexiflow serve               # local JSON API on :8760, SSE at /events
 python -m lexiflow tui                 # terminal dashboard, no browser
 python -m lexiflow bench               # time every stage, --json for machine output
 python -m lexiflow sessions            # list everything recorded so far
@@ -136,6 +139,32 @@ non-overlapping, and short utterances get a minimum on-screen duration, so the f
 in players that reject overlapping cues. The markdown export is a meeting-note document: summary,
 keyphrases, action-item checkboxes, speaker table, entities and the full transcript. The same five
 formats are one click away in the dashboard's session digest panel.
+
+## As a local API
+
+`serve` puts the running engine behind plain HTTP on loopback, using nothing but the standard
+library, so anything on the machine can read and drive a live session:
+
+```bash
+python -m lexiflow serve --model base.en
+curl localhost:8760/transcript
+curl localhost:8760/actions?open=true
+curl -X POST localhost:8760/actions/<id>/toggle -d '{"done": true}'
+curl "localhost:8760/export?format=md" -o notes.md
+curl -N localhost:8760/events                      # server-sent events, live
+curl -X POST localhost:8760/text -d '{"text": "remind me to call the bank"}'
+```
+
+`GET /` lists every route. Also there: `/health`, `/snapshot`, `/digest` (add `?format=md`),
+`/speakers` with a rename POST, `/search?q=` (`&scope=all` for every session), `/sessions` and
+`/review`. Redaction applies here exactly as it does to a file export, so a redacted session stays
+redacted over the wire.
+
+It binds `127.0.0.1` with no token, which is the right default for a personal machine. Point
+`server.host` anywhere else and the config refuses to validate until you set `server.token`;
+requests then need `Authorization: Bearer <token>`. CORS stays off unless you name an origin. A
+subscriber that stops reading has its events dropped rather than being allowed to stall the
+pipeline.
 
 As a library:
 
@@ -243,6 +272,8 @@ the pipeline is unaffected.
 | `lexiflow/redaction.py` | — | pattern and entity driven scrubbing with stable pseudonyms |
 | `lexiflow/insights.py` | — | cross-session review: open items, recurring themes, trends |
 | `lexiflow/batch.py` | — | folder-at-a-time processing with a resumable manifest |
+| `lexiflow/server.py` | — | stdlib HTTP API and event stream over a running pipeline |
+| `lexiflow/selftest.py` | — | end-to-end check of the real model on this machine |
 
 ## Tests
 
@@ -369,6 +400,8 @@ all. Both dashboards can produce a redacted copy: a checkbox in Streamlit, `r` i
 
 The only network access anywhere in the project is explicit and one-off: `models get` downloading
 Whisper weights and `translate install` downloading a language pair. Neither runs unless you ask.
+`serve` opens a socket rather than reaching for one, and binds loopback until you both change the
+host and set a token.
 
 ## Limitations
 

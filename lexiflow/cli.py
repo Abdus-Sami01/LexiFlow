@@ -16,6 +16,7 @@ import numpy as np
 from . import __version__, export, insights
 from . import batch as batch_module
 from . import selftest as selftest_module
+from . import server as server_module
 from .asr import backend_report, hardware, models
 from .asr.backends import ScriptedBackend
 from .audio.capture import AudioBackendUnavailable, list_input_devices
@@ -750,6 +751,47 @@ def command_setup(args: argparse.Namespace) -> int:
     return 1 if result.failed else 0
 
 
+def command_serve(args: argparse.Namespace) -> int:
+    """Expose the live engine as JSON on localhost so other tools can drive it."""
+    config = _load_config(args.config)
+    problem = _apply_model(config, args.model)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    if args.backend:
+        config.asr.backend = args.backend
+    if args.host:
+        config.server.host = args.host
+    if args.port:
+        config.server.port = args.port
+    if args.token:
+        config.server.token = args.token
+    if args.allow_origin:
+        config.server.allow_origin = args.allow_origin
+
+    problems = [item for item in config.validate() if item.startswith("server.")]
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+
+    pipeline = LexiFlowPipeline(config)
+    try:
+        pipeline.start(open_microphone=not args.no_microphone)
+    except AudioBackendUnavailable as error:
+        print(f"{error}\nstarting without a microphone; POST /text still works", file=sys.stderr)
+        pipeline.start(open_microphone=False)
+
+    server = server_module.LexiFlowServer(pipeline, config.server)
+    print(f"serving {server.url} ({'token required' if config.server.token else 'no token'})")
+    print("ctrl-c to stop")
+    try:
+        server.serve_forever()
+    finally:
+        pipeline.stop()
+        pipeline.store.close()
+    return 0
+
+
 def command_dashboard(args: argparse.Namespace) -> int:
     try:
         from streamlit.web import cli as streamlit_cli
@@ -908,6 +950,16 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--backend")
     check.add_argument("--json", action="store_true")
     check.set_defaults(handler=command_selftest)
+
+    serve = subparsers.add_parser("serve", help="expose the live engine as a local JSON API")
+    serve.add_argument("--host")
+    serve.add_argument("--port", type=int)
+    serve.add_argument("--token", help="require this bearer token on every request")
+    serve.add_argument("--allow-origin", help="CORS origin to allow, off by default")
+    serve.add_argument("--model")
+    serve.add_argument("--backend")
+    serve.add_argument("--no-microphone", action="store_true")
+    serve.set_defaults(handler=command_serve)
 
     doctor = subparsers.add_parser("doctor", help="report hardware, backends and devices")
     doctor.set_defaults(handler=command_doctor)

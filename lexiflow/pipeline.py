@@ -147,11 +147,11 @@ class LexiFlowPipeline:
     def rename_speaker(self, label: str, name: str) -> bool:
         """Enrol a cluster under a real name and keep it for the next session."""
         tracker = self.transcription.speakers
-        if tracker is None or not tracker.rename(label, name):
-            return False
-        self.store.rename_speaker(label, name)
-        self._save_speaker_profiles()
-        return True
+        enrolled = tracker is not None and tracker.rename(label, name)
+        relabelled = self.store.rename_speaker(label, name)
+        if enrolled:
+            self._save_speaker_profiles()
+        return bool(enrolled or relabelled)
 
     def _partial_gate(self) -> bool:
         """Stop paying for partials as soon as inference stops keeping up."""

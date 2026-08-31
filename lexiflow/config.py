@@ -154,6 +154,18 @@ class StateConfig:
 
 
 @dataclass
+class ServerConfig:
+    """The local HTTP API: loopback by default, and a token the moment it is not."""
+
+    host: str = "127.0.0.1"
+    port: int = 8760
+    token: Optional[str] = None
+    allow_origin: Optional[str] = None
+    event_queue: int = 256
+    transcript_limit: int = 200
+
+
+@dataclass
 class LexiFlowConfig:
     """The single object handed to :class:`lexiflow.pipeline.LexiFlowPipeline`."""
 
@@ -165,6 +177,7 @@ class LexiFlowConfig:
     translation: TranslationConfig = field(default_factory=TranslationConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
     state: StateConfig = field(default_factory=StateConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -187,6 +200,7 @@ class LexiFlowConfig:
             "translation": TranslationConfig,
             "redaction": RedactionConfig,
             "state": StateConfig,
+            "server": ServerConfig,
         }
         kwargs: Dict[str, Any] = {}
         for key, klass in sections.items():
@@ -270,6 +284,13 @@ class LexiFlowConfig:
             problems.append("diarization.max_speakers must be at least 1")
         if not 0.0 < self.diarization.adaptation_rate <= 1.0:
             problems.append("diarization.adaptation_rate must be between 0 and 1")
+        if not 1 <= self.server.port <= 65_535:
+            problems.append(f"server.port must be a valid port, got {self.server.port}")
+        if self.server.host not in {"127.0.0.1", "localhost", "::1"} and not self.server.token:
+            problems.append(
+                f"server.host is {self.server.host}, which is reachable from other machines; "
+                "set server.token before binding off loopback"
+            )
         if self.diarization.word_window_seconds <= 0.0:
             problems.append("diarization.word_window_seconds must be positive")
         if self.diarization.word_level and not self.asr.word_timestamps:
