@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
+from .audio.speaker import word_turns
+
 SUBTITLE_MIN_SECONDS = 0.4
 
 
@@ -92,7 +94,7 @@ def to_cues(
         else:
             pieces = [{"start": row.started_at, "end": row.ended_at, "text": row.text}]
         for piece in pieces:
-            units.append({**piece, "speaker": speaker})
+            units.append({**piece, "speaker": piece.get("speaker") or speaker})
 
     cues: List[Cue] = []
     previous_end = 0.0
@@ -159,6 +161,15 @@ def to_text(items: Sequence[Any], speakers: bool = True) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def _mixed_turns(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Only split a transcript line when word labels actually disagree within it."""
+    words = [word for span in (row.get("spans") or []) for word in (span.get("words") or [])]
+    if not words or not any(word.get("speaker") for word in words):
+        return []
+    turns = word_turns(words)
+    return turns if len({turn.get("speaker") for turn in turns}) > 1 else []
+
+
 def to_markdown(payload: Dict[str, Any], digest: Optional[Any] = None) -> str:
     """A meeting-note style document: summary, actions, speakers, transcript."""
     session = payload.get("session", {})
@@ -209,6 +220,12 @@ def to_markdown(payload: Dict[str, Any], digest: Optional[Any] = None) -> str:
     transcript = payload.get("transcript") or []
     lines.extend(["", "## Transcript", ""])
     for row in transcript:
+        turns = _mixed_turns(row)
+        if turns:
+            for turn in turns:
+                who = f"**{turn['speaker']}** · " if turn.get("speaker") else ""
+                lines.append(f"- {who}{turn['text']}")
+            continue
         who = f"**{row['speaker']}** · " if row.get("speaker") else ""
         lines.append(f"- {who}{row['text']}")
         if row.get("translation"):

@@ -69,6 +69,9 @@ class DiarizationConfig:
     split_on_change: bool = True
     change_threshold: float = 0.35
     change_window_seconds: float = 0.8
+    word_level: bool = False
+    word_window_seconds: float = 0.6
+    word_min_confidence: float = 0.04
     profile_path: Optional[Path] = None
 
 
@@ -267,6 +270,12 @@ class LexiFlowConfig:
             problems.append("diarization.max_speakers must be at least 1")
         if not 0.0 < self.diarization.adaptation_rate <= 1.0:
             problems.append("diarization.adaptation_rate must be between 0 and 1")
+        if self.diarization.word_window_seconds <= 0.0:
+            problems.append("diarization.word_window_seconds must be positive")
+        if self.diarization.word_level and not self.asr.word_timestamps:
+            problems.append(
+                "diarization.word_level needs asr.word_timestamps = true to have words to label"
+            )
 
         if self.asr.threads < 0:
             problems.append("asr.threads cannot be negative; use 0 to autodetect")

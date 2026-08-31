@@ -79,6 +79,15 @@ def _load_config(path: Optional[str]) -> LexiFlowConfig:
         raise SystemExit(f"cannot use {path}: {error}") from error
 
 
+def _apply_word_speakers(config: LexiFlowConfig, enabled: bool) -> None:
+    """Word-level labels are useless without word timings, so turn both on together."""
+    if not enabled:
+        return
+    config.diarization.enabled = True
+    config.diarization.word_level = True
+    config.asr.word_timestamps = True
+
+
 def _apply_model(config: LexiFlowConfig, requested: Optional[str]) -> Optional[str]:
     """Accept a catalogue name or a path, and say so clearly when it is missing."""
     if not requested:
@@ -221,6 +230,7 @@ def command_run(args: argparse.Namespace) -> int:
         return 1
     if args.backend:
         config.asr.backend = args.backend
+    _apply_word_speakers(config, getattr(args, "word_speakers", False))
 
     pipeline = LexiFlowPipeline(config)
     try:
@@ -261,6 +271,7 @@ def command_replay(args: argparse.Namespace) -> int:
     if args.backend:
         config.asr.backend = args.backend
 
+    _apply_word_speakers(config, getattr(args, "word_speakers", False))
     audio, rate = _read_wav(Path(args.path))
     pipeline = LexiFlowPipeline(config)
     pipeline.start(open_microphone=False)
@@ -915,6 +926,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--interval", type=float, default=0.25)
     run.add_argument("--export", help="write the session to a JSON file on exit")
     run.add_argument("--digest", action="store_true", help="print a summary on exit")
+    run.add_argument(
+        "--word-speakers", action="store_true", help="label every word, not every segment"
+    )
     run.set_defaults(handler=command_run)
 
     replay = subparsers.add_parser("replay", help="push a wav file through the live pipeline")
@@ -923,6 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--backend")
     replay.add_argument("--realtime", action="store_true")
     replay.add_argument("--drain-timeout", type=float, default=120.0)
+    replay.add_argument("--word-speakers", action="store_true")
     replay.set_defaults(handler=command_replay)
 
     demo = subparsers.add_parser("demo", help="run the analytics engine over sample text")

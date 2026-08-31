@@ -142,6 +142,82 @@ def find_change_point(
     return best_index
 
 
+def _smooth_labels(labels: List[Optional[str]]) -> List[Optional[str]]:
+    """A single word disagreeing with both its neighbours is clustering noise, not a turn."""
+    if len(labels) < 3:
+        return list(labels)
+    smoothed = list(labels)
+    for index in range(1, len(labels) - 1):
+        before, after = labels[index - 1], labels[index + 1]
+        if before is not None and before == after and labels[index] != before:
+            smoothed[index] = before
+    return smoothed
+
+
+def attribute_words(
+    words: List[Dict[str, object]],
+    audio: np.ndarray,
+    sample_rate: int,
+    tracker: "SpeakerTracker",
+    origin: float = 0.0,
+    window_seconds: float = 0.6,
+    min_confidence: float = 0.04,
+    fallback: Optional[str] = None,
+) -> List[Dict[str, object]]:
+    """Label each word by matching a window of audio around it to the known voices."""
+    if not words or audio.size == 0:
+        return [dict(word) for word in words]
+
+    half = max(1, int(window_seconds * sample_rate / 2))
+    labels: List[Optional[str]] = []
+    confidences: List[float] = []
+
+    for word in words:
+        start = float(word.get("start") or 0.0) - origin
+        end = float(word.get("end") or start) - origin
+        centre = int(max(0.0, (start + end) / 2.0) * sample_rate)
+        window = audio[max(0, centre - half) : min(audio.size, centre + half)]
+        embedding = voice_embedding(window, sample_rate)
+        assignment = tracker.classify(embedding) if embedding is not None else None
+        if assignment is None or assignment.confidence < min_confidence:
+            labels.append(None)
+            confidences.append(assignment.confidence if assignment else 0.0)
+            continue
+        labels.append(assignment.label)
+        confidences.append(assignment.confidence)
+
+    labelled = []
+    for word, label, confidence in zip(words, _smooth_labels(labels), confidences):
+        entry = dict(word)
+        entry["speaker"] = label or fallback
+        entry["speaker_confidence"] = round(confidence, 3)
+        labelled.append(entry)
+    return labelled
+
+
+def word_turns(words: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Collapse per-word labels back into speaker turns, which is what a reader wants."""
+    turns: List[Dict[str, object]] = []
+    for word in words:
+        speaker = word.get("speaker")
+        text = str(word.get("text") or "").strip()
+        if not text:
+            continue
+        if turns and turns[-1]["speaker"] == speaker:
+            turns[-1]["text"] = f"{turns[-1]['text']} {text}"
+            turns[-1]["end"] = word.get("end")
+            continue
+        turns.append(
+            {
+                "speaker": speaker,
+                "text": text,
+                "start": word.get("start"),
+                "end": word.get("end"),
+            }
+        )
+    return turns
+
+
 @dataclass
 class SpeakerProfile:
     label: str
@@ -303,6 +379,21 @@ class SpeakerTracker:
                 confidence=float(min(1.0, max(0.0, margin * 2.0))),
                 metadata={"runner_up": runner_up},
             )
+
+    def classify(self, embedding: np.ndarray) -> Optional[SpeakerAssignment]:
+        """Match against the known clusters without creating or adapting any of them."""
+        with self._lock:
+            label, similarity, runner_up = self._nearest(embedding)
+        if label is None:
+            return None
+        margin = similarity - runner_up if runner_up > 0 else similarity
+        return SpeakerAssignment(
+            label=label,
+            similarity=similarity,
+            is_new=False,
+            confidence=float(min(1.0, max(0.0, margin * 2.0))),
+            metadata={"runner_up": runner_up},
+        )
 
     def _nearest(self, embedding: np.ndarray) -> Tuple[Optional[str], float, float]:
         scores = [

@@ -80,6 +80,7 @@ python -m lexiflow models get base.en  # download it, resumable, into ~/.lexiflo
 python -m lexiflow build               # tuned whisper.cpp build command for this machine
 python -m lexiflow devices             # list input devices
 python -m lexiflow run --model base.en
+python -m lexiflow run --word-speakers        # label every word, not every segment
 python -m lexiflow replay meeting.wav --model base.en   # drains the queue before exit
 python -m lexiflow batch ./recordings --model base.en   # a whole folder, resumable
 python -m lexiflow demo                # analytics over a sample conversation, no audio needed
@@ -122,6 +123,12 @@ backend, model load, realtime factor, diarization, analytics and all five export
 non-zero on a genuine failure and warns rather than fails on anything it cannot measure, so it
 works as a post-install check and as a CI gate. `setup` is the same thing with the download in
 front of it.
+
+`--word-speakers` turns on word timings and matches a short window of audio around each word
+against the known voices, without letting those slices create or drift the clusters. A lone word
+disagreeing with both its neighbours is smoothed away, an unconfident one falls back to the
+segment's own label, and a transcript line whose words genuinely disagree is split into one turn
+per speaker in the markdown export and one cue per speaker with `--words`.
 
 Exports cover `srt`, `vtt`, `txt`, `md` and `json`. `--words` emits one cue per word wherever the
 backend gave word timings, otherwise it falls back to segment timings. Subtitle cues are made monotonic and
@@ -382,10 +389,10 @@ What is still true, stated plainly:
 - **The non-English sentiment lexicons are compact.** Roughly fifty hand-picked terms each,
   against a few thousand for English via vaderSentiment. They get the polarity right on clear
   statements and will miss subtler wording.
-- **Speaker attribution is still unsupervised.** Distinct voices separate cleanly and mid-segment
-  changes are now split, but genuinely simultaneous speech is one waveform and cannot be
-  un-mixed by clustering. Very similar voices can merge into one cluster. Labels are per segment,
-  not per word.
+- **Speaker attribution is still unsupervised.** Distinct voices separate cleanly, mid-segment
+  changes are split, and `--word-speakers` labels each word individually, but genuinely
+  simultaneous speech is one waveform and cannot be un-mixed by clustering. Very similar voices
+  can merge into one cluster.
 - **The spectral gate rejects noise, not music.** Fans, hiss and broadband noise are filtered by
   flatness and zero-crossing rate. Tonal music sits in the same part of the feature space as
   voiced speech and will still open a segment.
@@ -399,7 +406,6 @@ What is still true, stated plainly:
 
 ## Roadmap
 
-- Word-level speaker attribution rather than per segment
 - A small on-device model for genuinely abstractive summaries, kept optional
 - Native rule packs for the languages currently served by translation
 

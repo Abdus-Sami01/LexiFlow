@@ -353,13 +353,27 @@ class ScriptedBackend(WhisperBackend):
             )
         text = self._lines[self._cursor % len(self._lines)] if self._lines else ""
         self._cursor += 1
+        duration = array.size / float(sample_rate)
         return TranscriptionResult(
             text=text,
             language=self.config.language,
             inference_seconds=0.0,
-            audio_seconds=array.size / float(sample_rate),
+            audio_seconds=duration,
             backend=self.name,
+            segments=self._spans(text, duration),
         )
+
+    def _spans(self, text: str, duration: float) -> List[Dict[str, Any]]:
+        """Spread the scripted words evenly, so the word-timing path is testable offline."""
+        if not text or not self.config.word_timestamps:
+            return []
+        tokens = text.split()
+        step = duration / len(tokens)
+        words = [
+            {"start": index * step, "end": (index + 1) * step, "text": token}
+            for index, token in enumerate(tokens)
+        ]
+        return [{"start": 0.0, "end": duration, "text": text, "words": words}]
 
 
 def available_backends() -> List[str]:

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from ..audio.segmenter import SpeechSegment
-from ..audio.speaker import SpeakerTracker
+from ..audio.speaker import SpeakerTracker, attribute_words
 from ..config import ASRConfig, DiarizationConfig, TranslationConfig
 from ..observability import record_failure
 from .backends import TranscriptionResult, WhisperBackend, create_backend
@@ -122,7 +122,7 @@ class TranscriptionEngine:
         return Utterance(
             translation=spoken,
             translation_engine=engine,
-            spans=self._absolute_spans(result, segment),
+            spans=self._label_words(self._absolute_spans(result, segment), segment, speaker),
             text=text,
             started_at=segment.started_at,
             ended_at=segment.ended_at,
@@ -189,6 +189,31 @@ class TranscriptionEngine:
                     "words": words,
                 }
             )
+        return spans
+
+    def _label_words(
+        self, spans: List[dict], segment: SpeechSegment, fallback: Optional[str]
+    ) -> List[dict]:
+        """Per-word attribution, so one segment can carry two voices instead of an average."""
+        if self.speakers is None or not self.diarization.word_level or not segment.is_final:
+            return spans
+        for span in spans:
+            words = span.get("words") or []
+            if not words:
+                continue
+            try:
+                span["words"] = attribute_words(
+                    words,
+                    segment.audio,
+                    segment.sample_rate,
+                    self.speakers,
+                    origin=segment.started_at,
+                    window_seconds=self.diarization.word_window_seconds,
+                    min_confidence=self.diarization.word_min_confidence,
+                    fallback=fallback,
+                )
+            except Exception as error:
+                record_failure("asr.word_speakers", error)
         return spans
 
     def _attribute(self, segment: SpeechSegment) -> tuple[Optional[str], float]:
