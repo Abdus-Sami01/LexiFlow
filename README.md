@@ -4,6 +4,7 @@
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![ruff](https://img.shields.io/badge/lint-ruff-261230)](https://github.com/astral-sh/ruff)
+[![pypi](https://img.shields.io/pypi/v/lexiflow)](https://pypi.org/project/lexiflow/)
 [![offline](https://img.shields.io/badge/cloud%20calls-zero-orange)](#)
 
 Real-time speech to structured insight, running entirely on your own CPU. Audio never leaves the
@@ -59,10 +60,18 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
 ## Install
 
 ```bash
-pip install -e ".[all]"          # everything
-pip install -e ".[audio,ui]"     # capture + dashboards, bring your own ASR
-pip install -e ".[translate]"    # offline Argos/OPUS-MT translation
+pip install lexiflow                 # the engine and the CLI
+pip install "lexiflow[all]"          # everything
+pip install "lexiflow[audio,ui]"     # capture + dashboards, bring your own ASR
+pip install "lexiflow[translate]"    # offline Argos/OPUS-MT translation
 python -m spacy download en_core_web_sm
+```
+
+From a clone, swap `lexiflow` for `-e .` in any of those. Then prove the install works on your
+own hardware:
+
+```bash
+python -m lexiflow setup     # picks a model for this machine, fetches it, runs the self-test
 ```
 
 Only `numpy` is mandatory. Every optional dependency degrades gracefully: without `sounddevice` you
@@ -442,6 +451,20 @@ What is still true, stated plainly:
 ## Roadmap
 
 - A small on-device model for genuinely abstractive summaries, kept optional
+
+## Releasing
+
+Publishing runs on PyPI Trusted Publishing, so there is no API token stored anywhere. Configure it
+once on PyPI (and TestPyPI): publisher `Abdus-Sami01/LexiFlow`, workflow `release.yml`, environment
+`pypi` (and `testpypi`). After that a release is one tag:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The workflow lints, runs the suite, builds the sdist and wheel, checks them with twine, publishes to
+TestPyPI, and only then to PyPI. Bump `version` in `pyproject.toml` and `__version__` together — a
+test fails if they drift.
 
 ## License
 

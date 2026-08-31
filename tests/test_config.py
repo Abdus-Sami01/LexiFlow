@@ -1,7 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
+import tomllib
 
+import lexiflow
 from lexiflow.cli import main
 from lexiflow.config import LexiFlowConfig
 
@@ -144,3 +147,21 @@ def test_a_bad_config_stops_a_command_early(tmp_path):
     with pytest.raises(SystemExit) as caught:
         main(["--config", str(bad), "demo", "--no-persist"])
     assert "beam_size" in str(caught.value)
+
+
+def project_metadata():
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    return tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]
+
+
+def test_the_packaged_version_matches_the_module():
+    assert project_metadata()["version"] == lexiflow.__version__
+
+
+def test_every_optional_extra_is_covered_by_all():
+    extras = project_metadata()["optional-dependencies"]
+    everything = set(extras["all"])
+    for name, requirements in extras.items():
+        if name in {"all", "dev"}:
+            continue
+        assert set(requirements) <= everything, name

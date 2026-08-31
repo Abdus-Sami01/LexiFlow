@@ -1,33 +1,51 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lexiflow"
-version = "0.1.0"
-description = "Real-time, fully local speech-to-insight engine: ring-buffered capture, native Whisper inference, rule-first NLP analytics and a live dashboard."
+version = "0.2.0"
+description = "Real-time, fully local speech-to-insight engine: ring-buffered capture, native Whisper inference, speaker diarization, rule-first NLP analytics, offline translation and a live dashboard."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "Abdus Sami" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Abdus Sami", email = "muhammadabdulsami7@gmail.com" }]
 keywords = [
     "speech-to-text",
+    "transcription",
     "whisper",
+    "whisper-cpp",
     "real-time",
     "offline",
+    "on-device",
+    "privacy",
+    "speaker-diarization",
     "nlp",
     "sentiment-analysis",
+    "meeting-notes",
+    "subtitles",
     "streamlit",
+    "textual",
     "audio",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Environment :: Web Environment",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
 ]
 dependencies = ["numpy>=1.22"]
 
@@ -51,6 +69,7 @@ all = [
 
 [project.urls]
 Homepage = "https://github.com/Abdus-Sami01/LexiFlow"
+Source = "https://github.com/Abdus-Sami01/LexiFlow"
 Issues = "https://github.com/Abdus-Sami01/LexiFlow/issues"
 
 [project.scripts]
@@ -58,6 +77,9 @@ lexiflow = "lexiflow.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["lexiflow*"]
+
+[tool.setuptools.package-data]
+lexiflow = ["py.typed"]
 
 [tool.ruff]
 line-length = 100
