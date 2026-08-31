@@ -138,6 +138,89 @@ def read_audio(path: Path, target_rate: int = 16_000) -> np.ndarray:
     )
 
 
+@dataclass
+class Transcription:
+    """What one recording turned into, with the exporters one call away."""
+
+    rows: List[Any] = field(default_factory=list)
+    payload: Dict[str, Any] = field(default_factory=dict)
+    digest: Any = None
+    session_id: str = ""
+    audio_seconds: float = 0.0
+    elapsed_seconds: float = 0.0
+
+    @property
+    def text(self) -> str:
+        return "\n".join(row.text for row in self.rows)
+
+    @property
+    def actions(self) -> List[Dict[str, Any]]:
+        return list(self.payload.get("actions") or [])
+
+    @property
+    def speakers(self) -> List[Dict[str, Any]]:
+        return list(self.payload.get("speakers") or [])
+
+    @property
+    def realtime_factor(self) -> float:
+        if self.audio_seconds <= 0.0:
+            return 0.0
+        return self.elapsed_seconds / self.audio_seconds
+
+    def render(self, fmt: str = "md") -> str:
+        return export.render(fmt, self.rows, self.payload, self.digest)
+
+    def write(self, stem: Path, formats: Sequence[str] = ("md",)) -> List[Path]:
+        return export.write_many(formats, Path(stem), self.rows, self.payload, self.digest)
+
+
+def transcribe_file(
+    path: Path,
+    config: Optional[LexiFlowConfig] = None,
+    backend: Optional[Any] = None,
+    timeout: Optional[float] = None,
+) -> Transcription:
+    """One call from a wav file to notes, for callers who do not want to wire a pipeline."""
+    settings = LexiFlowConfig.from_dict((config or LexiFlowConfig()).to_dict())
+    settings.segmenter.emit_partials = False
+    settings.state.session_name = settings.state.session_name or Path(path).stem
+
+    audio = read_audio(Path(path), settings.audio.target_sample_rate)
+    audio_seconds = audio.size / float(settings.audio.target_sample_rate)
+    started = time.perf_counter()
+
+    pipeline = LexiFlowPipeline(settings, backend=backend)
+    try:
+        pipeline.start(open_microphone=False)
+        block = settings.audio.block_size
+        for offset in range(0, audio.size, block):
+            pipeline.feed(audio[offset : offset + block])
+        if not pipeline.drain(timeout=timeout or max(60.0, audio_seconds * 4)):
+            record_failure("batch.transcribe_file", TimeoutError("pipeline did not finish in time"))
+        pipeline.stop()
+
+        rows = pipeline.store.transcript()
+        payload = pipeline.store.export()
+        digest = pipeline.digest()
+        if settings.redaction.enabled:
+            redactor = build_redactor(settings.redaction, pipeline.analytics.entities)
+            rows = redactor.redact_rows(rows)
+            payload = redactor.redact_payload(payload)
+            payload["transcript"] = [row.as_dict() for row in rows]
+            digest = pipeline.digest(rows=rows)
+
+        return Transcription(
+            rows=rows,
+            payload=payload,
+            digest=digest,
+            session_id=pipeline.store.session_id,
+            audio_seconds=audio_seconds,
+            elapsed_seconds=time.perf_counter() - started,
+        )
+    finally:
+        pipeline.close()
+
+
 class BatchRunner:
     """Each recording gets its own pipeline, its own session and its own files."""
 

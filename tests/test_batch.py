@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from lexiflow.asr.backends import ScriptedBackend
-from lexiflow.batch import BatchJob, BatchRunner, discover, read_audio
+from lexiflow.batch import BatchJob, BatchRunner, discover, read_audio, transcribe_file
 from lexiflow.cli import main
 from lexiflow.config import LexiFlowConfig
 
@@ -252,3 +252,78 @@ def test_batch_command_reports_and_exits_nonzero_on_failure(tmp_path, recordings
 def test_batch_command_rejects_a_missing_path(tmp_path, capsys):
     assert main(["batch", str(tmp_path / "nowhere")]) == 1
     assert "does not exist" in capsys.readouterr().err
+
+
+def transcription_for(tmp_path, source, **overrides):
+    config = LexiFlowConfig()
+    config.state.database_path = tmp_path / "one.db"
+    config.asr.warmup = False
+    config.segmenter.min_segment_seconds = 0.4
+    config.segmenter.silence_hangover_seconds = 0.3
+    for key, value in overrides.items():
+        section, _, field_name = key.partition("__")
+        setattr(getattr(config, section), field_name, value)
+    return transcribe_file(source, config, backend=ScriptedBackend(LINES, config.asr))
+
+
+def test_one_call_turns_a_recording_into_notes(tmp_path, recordings):
+    result = transcription_for(tmp_path, recordings / "standup.wav")
+
+    assert result.rows
+    assert "Sarah Chen" in result.text
+    assert result.actions
+    assert result.session_id
+    assert result.audio_seconds == pytest.approx(2.0, abs=0.1)
+    assert result.realtime_factor > 0
+
+
+def test_the_result_renders_every_format(tmp_path, recordings):
+    result = transcription_for(tmp_path, recordings / "standup.wav")
+    for fmt in ("md", "srt", "vtt", "txt", "json"):
+        assert result.render(fmt).strip()
+
+
+def test_the_result_writes_files(tmp_path, recordings):
+    result = transcription_for(tmp_path, recordings / "standup.wav")
+    written = result.write(tmp_path / "out" / "standup", ("md", "srt"))
+    assert {path.suffix for path in written} == {".md", ".srt"}
+    assert all(path.is_file() for path in written)
+
+
+def test_the_session_is_named_after_the_file(tmp_path, recordings):
+    result = transcription_for(tmp_path, recordings / "review.wav")
+    assert result.payload["session"]["name"] == "review"
+
+
+def test_redaction_applies_to_a_single_file_too(tmp_path, recordings):
+    result = transcription_for(tmp_path, recordings / "standup.wav", redaction__enabled=True)
+    assert "Sarah Chen" not in result.text
+    assert "Sarah Chen" not in result.render("md")
+
+
+def test_a_corrupt_file_raises_rather_than_returning_nothing(tmp_path, recordings):
+    (recordings / "bad.wav").write_text("not a riff header")
+    with pytest.raises(Exception):
+        transcription_for(tmp_path, recordings / "bad.wav")
+
+
+def test_the_caller_config_is_not_mutated(tmp_path, recordings):
+    config = LexiFlowConfig()
+    config.state.database_path = tmp_path / "untouched.db"
+    config.asr.warmup = False
+    config.segmenter.emit_partials = True
+
+    transcribe_file(
+        recordings / "standup.wav", config, backend=ScriptedBackend(LINES, config.asr)
+    )
+    assert config.segmenter.emit_partials is True
+    assert config.state.session_name is None
+
+
+def test_the_public_api_exposes_what_a_library_user_needs():
+    import lexiflow
+
+    for name in ("transcribe_file", "LexiFlowPipeline", "LexiFlowConfig", "serve", "export"):
+        assert name in lexiflow.__all__
+        assert hasattr(lexiflow, name)
+    assert sorted(lexiflow.__all__) == lexiflow.__all__

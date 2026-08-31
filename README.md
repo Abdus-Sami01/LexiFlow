@@ -175,7 +175,19 @@ requests then need `Authorization: Bearer <token>`. CORS stays off unless you na
 subscriber that stops reading has its events dropped rather than being allowed to stall the
 pipeline.
 
-As a library:
+As a library, one file at a time:
+
+```python
+from lexiflow import transcribe_file
+
+result = transcribe_file("standup.wav")
+print(result.text)
+print(result.actions)
+print(result.render("md"))
+result.write("notes/standup", ("md", "srt"))
+```
+
+Or live, with the pipeline open:
 
 ```python
 from lexiflow import LexiFlowConfig, LexiFlowPipeline
