@@ -30,8 +30,8 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
   passing the numpy array directly to C++ instead of shelling out to a binary.
 - Extracts action items, deadlines, blockers, decisions, entities and sentiment from each line in
   well under a millisecond, using regex rules, a small spaCy model and a lexicon-based scorer.
-  English, Spanish, French, German, Italian and Portuguese each have their own rule pack and
-  valence lexicon; the language is detected per line and the analytics step aside entirely for
+  English, Spanish, French, German, Italian, Portuguese and Dutch each have their own rule pack
+  and valence lexicon; the language is detected per line and the analytics step aside entirely for
   anything else rather than emitting nonsense.
 - Attributes each utterance to a speaker with online MFCC clustering: a numpy mel-filterbank and
   DCT frontend feeds cosine-similarity centroids that grow as new voices appear. When two people
@@ -40,7 +40,7 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
 - Translates locally, two ways: Whisper's own translate task turns any supported language into
   English straight from the audio, and Argos/OPUS-MT models handle text between any installed
   pair. When a language has no rule pack, the analytics run on the translation instead of giving
-  up, so a Dutch meeting still yields English action items.
+  up, so a Polish meeting still yields English action items.
 - Summarises the session on demand with TextRank over a sentence-similarity graph, ranks keyphrases
   with RAKE, and flags topic changes by cosine distance between rolling word windows.
 - Streams partial hypotheses while someone is still talking, so the transcript ticker updates
@@ -374,11 +374,13 @@ Whisper weights and `translate install` downloading a language pair. Neither run
 
 What is still true, stated plainly:
 
-- **Analytics covers six languages natively, and the rest through translation.** English,
-  Spanish, French, German, Italian and Portuguese have their own rule packs and lexicons. For
+- **Analytics covers seven languages natively, and the rest through translation.** English,
+  Spanish, French, German, Italian, Portuguese and Dutch have their own rule packs and lexicons.
+  Polish and Swedish are detected but not analysed, so they route through translation. For
   anything else, enabling translation lets the analytics run on the English translation instead;
   with translation off they switch themselves off rather than emit nonsense. Adding a native
-  language means adding a lexicon and a rule pack to `lexiflow/nlp/multilingual.py`.
+  language means adding one entry per table in `lexiflow/nlp/multilingual.py`; the detector and
+  the supported-language set derive themselves from that registry rather than repeating it.
 - **Translation quality is the model's, not ours.** Whisper's translate task and the OPUS-MT
   models are solid for meeting speech but will miss idiom and proper nouns, and translating into
   English costs a second inference pass per utterance. Argos needs its language pair downloaded
@@ -407,7 +409,6 @@ What is still true, stated plainly:
 ## Roadmap
 
 - A small on-device model for genuinely abstractive summaries, kept optional
-- Native rule packs for the languages currently served by translation
 
 ## License
 

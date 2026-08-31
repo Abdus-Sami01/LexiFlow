@@ -19,7 +19,10 @@ SAMPLES = {
     "es": "La fecha límite es el viernes y estoy muy preocupado por el retraso.",
     "fr": "La date limite est vendredi et je suis très inquiet du retard.",
     "de": "Die Frist ist Freitag und ich bin sehr besorgt wegen der Verzögerung.",
+    "nl": "De deadline is vrijdag en ik ben heel bezorgd over de vertraging.",
 }
+
+POLISH = "Nie wiem czy to jest dobrze ale musimy to zrobić dzisiaj ponieważ nie działa"
 
 
 def voice(fundamental, seconds=2.0, seed=0):
@@ -44,10 +47,10 @@ def test_detection_falls_back_on_too_little_text():
 
 
 def test_unsupported_language_is_flagged():
-    guess = detect("Ik denk dat we het vandaag samen moeten doen omdat het niet werkt")
-    assert guess.code == "nl"
+    guess = detect(POLISH)
+    assert guess.code == "pl"
     assert guess.supported is False
-    assert "nl" not in ANALYTICS_LANGUAGES
+    assert "pl" not in ANALYTICS_LANGUAGES
 
 
 def test_router_is_sticky_across_a_noisy_line():
@@ -110,9 +113,8 @@ def test_analytics_extracts_from_french_and_german():
 
 def test_analytics_steps_aside_for_unsupported_languages():
     engine = AnalyticsEngine()
-    text = "Ik denk dat we het vandaag samen moeten doen omdat het niet werkt en"
-    insight = engine.analyse(text)
-    assert insight.language == "nl"
+    insight = engine.analyse(POLISH)
+    assert insight.language == "pl"
     assert insight.analytics_applied is False
     assert insight.extractions == []
     assert insight.sentiment is None
@@ -258,3 +260,62 @@ def test_partial_gate_respects_the_config_switch(tmp_path):
     pipeline = LexiFlowPipeline(config, backend=ScriptedBackend([], config.asr))
     assert pipeline._partial_gate() is False
     pipeline.close()
+
+
+DUTCH_LINES = {
+    "action_item": "Herinner me eraan om het rapport naar Sarah te sturen",
+    "deadline": "De deadline is vrijdag",
+    "blocker": "Ik zit vast op de audio driver",
+    "decision": "We hebben besloten om eerst de herschrijving uit te leveren",
+}
+
+
+@pytest.mark.parametrize("kind", sorted(DUTCH_LINES))
+def test_dutch_rules_find_each_kind(kind):
+    engine = AnalyticsEngine()
+    insight = engine.analyse(DUTCH_LINES[kind])
+    assert insight.language == "nl"
+    assert insight.analytics_applied is True
+    assert any(item.kind == kind for item in insight.extractions)
+
+
+def test_dutch_sentiment_reads_both_directions():
+    engine = SentimentEngine()
+    good = engine.score("Dit is een uitstekend resultaat en ik ben heel blij", language="nl")
+    bad = engine.score("Dit is verschrikkelijk en ik ben erg bezorgd", language="nl")
+    assert good.compound > 0.3
+    assert bad.compound < -0.3
+
+
+def test_dutch_negation_flips_the_polarity():
+    engine = SentimentEngine()
+    plain = engine.score("Het resultaat is goed", language="nl")
+    negated = engine.score("Het resultaat is niet goed", language="nl")
+    assert plain.compound > 0
+    assert negated.compound < plain.compound
+
+
+def test_dutch_stopwords_are_stripped_from_keyphrases():
+    assert "het" in stopwords_for("nl")
+    assert "vertraging" not in stopwords_for("nl")
+
+
+def test_dutch_is_analysed_natively_rather_than_translated():
+    engine = AnalyticsEngine()
+    insight = engine.analyse(SAMPLES["nl"])
+    assert insight.analysed_language == "nl"
+    assert insight.translation is None
+    assert insight.sentiment.compound < 0
+
+
+def test_every_rule_pack_covers_the_same_kinds():
+    kinds = {code: {rule.kind for rule in rules_for(code)} for code in ANALYTICS_LANGUAGES - {"en"}}
+    expected = {"action_item", "deadline", "blocker", "decision"}
+    assert all(covered == expected for covered in kinds.values()), kinds
+
+
+def test_every_pack_language_has_a_lexicon_and_markers():
+    for code in ANALYTICS_LANGUAGES - {"en"}:
+        assert lexicon_for(code)
+        assert stopwords_for(code)
+        assert code in ANALYTICS_LANGUAGES

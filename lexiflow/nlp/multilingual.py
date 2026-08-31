@@ -67,12 +67,25 @@ PORTUGUESE_LEXICON: Dict[str, float] = {
     "confuso": -1.8, "medo": -2.3, "desculpa": -1.2,
 }
 
+DUTCH_LEXICON: Dict[str, float] = {
+    "uitstekend": 2.9, "geweldig": 2.8, "goed": 1.9, "beter": 1.9, "perfect": 3.0, "dank": 2.2,
+    "bedankt": 2.2, "blij": 2.6, "tevreden": 2.3, "prachtig": 2.7, "ongelooflijk": 2.5,
+    "fantastisch": 3.0, "succes": 2.7, "klaar": 1.4, "opgelost": 2.0, "akkoord": 1.5,
+    "rustig": 1.4, "zeker": 1.7, "snel": 1.4, "duidelijk": 1.4, "nuttig": 2.0, "sterk": 1.6,
+    "slecht": -2.5, "slechter": -2.4, "verschrikkelijk": -2.8, "vreselijk": -2.9,
+    "probleem": -1.9, "fout": -2.0, "storing": -2.4, "vertraging": -1.8, "bezorgd": -2.1,
+    "verdrietig": -2.4, "boos": -2.5, "moeilijk": -1.6, "onmogelijk": -2.2, "risico": -1.6,
+    "dringend": -1.4, "geblokkeerd": -2.0, "kapot": -2.3, "traag": -1.6, "duur": -1.3,
+    "verloren": -1.8, "verward": -1.8, "angst": -2.3, "helaas": -1.4, "jammer": -1.5,
+}
+
 LEXICONS: Dict[str, Dict[str, float]] = {
     "es": SPANISH_LEXICON,
     "fr": FRENCH_LEXICON,
     "de": GERMAN_LEXICON,
     "it": ITALIAN_LEXICON,
     "pt": PORTUGUESE_LEXICON,
+    "nl": DUTCH_LEXICON,
 }
 
 NEGATIONS: Dict[str, frozenset] = {
@@ -81,6 +94,7 @@ NEGATIONS: Dict[str, frozenset] = {
     "de": frozenset({"nicht", "kein", "keine", "keinen", "nie", "niemals", "ohne", "nichts"}),
     "it": frozenset({"non", "mai", "niente", "nessuno", "senza", "né"}),
     "pt": frozenset({"não", "nunca", "nada", "nenhum", "sem", "nem", "jamais"}),
+    "nl": frozenset({"niet", "geen", "nooit", "niets", "zonder", "noch", "nergens"}),
 }
 
 BOOSTERS: Dict[str, Dict[str, float]] = {
@@ -89,6 +103,7 @@ BOOSTERS: Dict[str, Dict[str, float]] = {
     "de": {"sehr": 0.293, "wirklich": 0.293, "ziemlich": 0.193, "kaum": -0.293, "etwas": -0.193},
     "it": {"molto": 0.293, "davvero": 0.293, "abbastanza": 0.193, "poco": -0.293},
     "pt": {"muito": 0.293, "realmente": 0.293, "bastante": 0.193, "pouco": -0.293},
+    "nl": {"heel": 0.293, "echt": 0.293, "zeer": 0.293, "vrij": 0.193, "nauwelijks": -0.293},
 }
 
 STOPWORDS: Dict[str, frozenset] = {
@@ -117,6 +132,11 @@ STOPWORDS: Dict[str, frozenset] = {
         """de que não para com uma você por mais isso está muito como mas quando porque então
         aqui agora sim nós eles fazer ter ser tempo ano dia sempre nunca ainda depois antes
         tudo nada algo outro esse essa dos das nas nos pelo pela""".split()
+    ),
+    "nl": frozenset(
+        """de het een ik je niet dat en van is we op voor met maar ook als zijn hebben worden
+        kunnen moeten er te in te om aan door over naar bij uit dan nog al zo wat wie waar
+        hoe deze die dit dat mijn jouw onze hun hij zij ze u men""".split()
     ),
 }
 
@@ -364,13 +384,110 @@ PORTUGUESE_RULES: List[RuleSpec] = [
     ),
 ]
 
+DUTCH_RULES: List[RuleSpec] = [
+    RuleSpec(
+        "herinnering",
+        "action_item",
+        _compile(r"\bherinner\s+(?:me|mij|ons)\s+(?:er)?aan\s+(?:om\s+|dat\s+)?(.+?)(?=[.?!;]|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "toezegging",
+        "action_item",
+        _compile(r"\b(?:ik ga|ik moet|we moeten|we gaan)\s+(.+?)(?=[.?!;]|$)"),
+        0.85,
+    ),
+    RuleSpec(
+        "verzoek",
+        "action_item",
+        _compile(r"\b(?:kun|kan|kunnen|zou)\s+(?:je|jij|jullie)\s+(?:alsjeblieft\s+)?"
+                 r"(.+?)(?=[.?!;]|$)"),
+        0.8,
+    ),
+    RuleSpec(
+        "deadline",
+        "deadline",
+        _compile(r"\b(?:deadline|uiterste datum)\s+(?:is|was)?\s*(.+?)(?=[.?!;,]|\s+en\b|$)"),
+        0.95,
+    ),
+    RuleSpec(
+        "oplevering",
+        "deadline",
+        _compile(r"\b(?:voor|v[óo]{2}r|uiterlijk)\s+(maandag|dinsdag|woensdag|donderdag|"
+                 r"vrijdag|zaterdag|zondag|morgen|vandaag|het weekend)\b"),
+        0.85,
+    ),
+    RuleSpec(
+        "blokkade",
+        "blocker",
+        _compile(r"\b(?:ik zit vast op|ik ben geblokkeerd door|geblokkeerd op|loop vast op)"
+                 r"\s+(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+    RuleSpec(
+        "besluit",
+        "decision",
+        _compile(r"\b(?:we hebben besloten|we besloten|besloten is)\s+(?:om\s+|dat\s+)?"
+                 r"(.+?)(?=[.?!;]|$)"),
+        0.9,
+    ),
+]
+
 RULE_PACKS: Dict[str, List[RuleSpec]] = {
     "es": SPANISH_RULES,
     "fr": FRENCH_RULES,
     "de": GERMAN_RULES,
     "it": ITALIAN_RULES,
     "pt": PORTUGUESE_RULES,
+    "nl": DUTCH_RULES,
 }
+
+MARKERS: Dict[str, frozenset] = {
+    "es": frozenset(
+        """que de no la el es en lo un por qué una los con para está esto del las muy más pero
+        todo bien sí aquí ahora cuando porque hacer puede tiene vamos también hasta desde sobre
+        entre nosotros ustedes ellos este esa ese cómo dónde quién gracias señor nada algo otro
+        tiempo año día""".split()
+    ),
+    "fr": frozenset(
+        """que de je est pas le vous la tu il et les des en un une ce qui nous sur pour dans
+        avec mais tout plus bien être avoir faire comme aussi très quand parce alors donc chose
+        temps jour année merci oui non peut cette ces leur sans sous entre après avant encore
+        toujours jamais""".split()
+    ),
+    "de": frozenset(
+        """der die und ich das nicht sie ist es den zu wir mit ein eine auf für aber auch als
+        war hat dass sich von dem noch wie über nur muss kann sehr schon immer jetzt hier dann
+        weil wenn oder mehr einen seine ihre unser danke bitte heute morgen jahr zeit arbeit
+        machen haben""".split()
+    ),
+    "it": frozenset(
+        """che di non il la un per sono una mi con ma come questo bene più anche molto quando
+        perché cosa tutto solo adesso grazie sì noi loro essere fare avere dove chi tempo anno
+        giorno lavoro sempre mai ancora dopo prima""".split()
+    ),
+    "pt": frozenset(
+        """que não de para com uma você por mais isso está muito como mas quando porque então
+        aqui agora obrigado sim nós eles fazer ter ser tempo ano dia trabalho sempre nunca ainda
+        depois antes tudo nada algo outro esse essa""".split()
+    ),
+    "nl": frozenset(
+        """de het een ik je niet dat en van is we op voor met maar ook als zijn hebben worden
+        kunnen moeten heel altijd nooit vandaag morgen jaar tijd werk dank graag omdat wanneer
+        waar wie hoe nog alleen samen herinner deadline besloten""".split()
+    ),
+}
+
+DIACRITICS: Dict[str, str] = {
+    "es": "ñáéíóúü¿¡",
+    "fr": "àâçéèêëîïôûùüÿœ",
+    "de": "äöüß",
+    "pt": "ãõáâçéêíóôú",
+    "it": "àèéìòù",
+    "nl": "ëïĳ",
+}
+
+SUPPORTED = frozenset(RULE_PACKS)
 
 
 def rules_for(code: str) -> List[RuleSpec]:

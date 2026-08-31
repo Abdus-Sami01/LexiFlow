@@ -18,6 +18,7 @@ from lexiflow.nlp.translate import (
 from lexiflow.pipeline import LexiFlowPipeline
 
 SAMPLE_RATE = 16_000
+POLISH = "Nie wiem czy to jest dobrze ale musimy to zrobić dzisiaj ponieważ nie działa"
 
 DICTIONARY = {
     ("es", "en"): {
@@ -26,10 +27,11 @@ DICTIONARY = {
         "recuérdame que envíe el informe": "remind me to send the report",
     },
     ("en", "es"): {"hello world": "hola mundo"},
-    ("nl", "en"): {
-        "ik denk dat we het vandaag samen moeten doen omdat het niet werkt": (
+    ("pl", "en"): {
+        "nie wiem czy to jest dobrze ale musimy to zrobić dzisiaj ponieważ nie działa": (
             "remind me to finish the report before Friday"
-        )
+        ),
+        "nie wiem czy to jest dobrze": "remind me to email finance on Friday",
     },
 }
 
@@ -155,10 +157,9 @@ def test_analytics_translates_a_supported_language_for_display():
 def test_analytics_falls_back_to_the_translation_for_unsupported_languages():
     engine = AnalyticsEngine(NLPConfig(), enabled())
     engine.translator = TranslationEngine(enabled(), DictionaryTranslator())
-    dutch = "Ik denk dat we het vandaag samen moeten doen omdat het niet werkt"
-    insight = engine.analyse(dutch)
+    insight = engine.analyse(POLISH)
 
-    assert insight.language == "nl"
+    assert insight.language == "pl"
     assert insight.analysed_language == "en"
     assert insight.analytics_applied is True
     assert insight.action_items
@@ -170,7 +171,7 @@ def test_analytics_prefers_a_translation_the_asr_already_made():
     engine = AnalyticsEngine(NLPConfig(), enabled())
     engine.translator = TranslationEngine(enabled(), translator)
     insight = engine.analyse(
-        "Ik denk dat het niet werkt", translation="remind me to email finance on Friday"
+        POLISH, translation="remind me to email finance on Friday"
     )
     assert insight.translation_engine == "whisper"
     assert translator.calls == 0
@@ -181,7 +182,7 @@ def test_analytics_leaves_unsupported_languages_alone_when_disabled():
     config = TranslationConfig(enabled=True, analyse_translation=False)
     engine = AnalyticsEngine(NLPConfig(), config)
     engine.translator = TranslationEngine(enabled(), DictionaryTranslator())
-    insight = engine.analyse("Ik denk dat we het vandaag samen moeten doen omdat het niet werkt")
+    insight = engine.analyse(POLISH)
     assert insight.analytics_applied is False
     assert insight.translation is not None
 

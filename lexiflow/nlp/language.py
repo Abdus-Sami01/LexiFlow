@@ -6,68 +6,41 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
+from . import multilingual
+
 WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
+ENGLISH_MARKERS: Set[str] = {
+    "the", "and", "that", "have", "for", "not", "with", "you", "this", "but", "his", "from",
+    "they", "say", "her", "she", "will", "one", "all", "would", "there", "their", "what",
+    "about", "which", "when", "make", "like", "time", "just", "know", "take", "into", "your",
+    "some", "could", "them", "than", "then", "look", "only", "come", "over", "think", "also",
+    "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even",
+    "want", "because", "these", "give", "day", "most", "need", "should", "does", "going",
+}
+
+DETECT_ONLY: Dict[str, Set[str]] = {
+    "pl": {
+        "nie", "jest", "się", "że", "tak", "ale", "jak", "czy", "już", "tylko", "bardzo",
+        "dzisiaj", "jutro", "teraz", "praca", "problem", "dobrze", "dziękuję", "proszę",
+        "musimy", "możesz", "trzeba", "wszystko", "jeszcze", "zawsze", "nigdy", "ponieważ",
+    },
+    "sv": {
+        "och", "att", "det", "som", "för", "inte", "med", "har", "jag", "vi", "men", "kan",
+        "ska", "idag", "imorgon", "arbete", "problem", "tack", "mycket", "alltid", "aldrig",
+        "eftersom", "kanske", "behöver", "bara", "redan", "sedan", "hela",
+    },
+}
+
 MARKERS: Dict[str, Set[str]] = {
-    "en": {
-        "the", "and", "that", "have", "for", "not", "with", "you", "this", "but", "his", "from",
-        "they", "say", "her", "she", "will", "one", "all", "would", "there", "their", "what",
-        "about", "which", "when", "make", "like", "time", "just", "know", "take", "into", "your",
-        "some", "could", "them", "than", "then", "look", "only", "come", "over", "think", "also",
-        "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even",
-        "want", "because", "these", "give", "day", "most", "need", "should", "does", "going",
-    },
-    "es": {
-        "que", "de", "no", "la", "el", "es", "en", "lo", "un", "por", "qué", "una", "los", "con",
-        "para", "está", "esto", "del", "las", "muy", "más", "pero", "todo", "bien", "sí", "aquí",
-        "ahora", "cuando", "porque", "hacer", "puede", "tiene", "vamos", "también", "hasta",
-        "desde", "sobre", "entre", "nosotros", "ustedes", "ellos", "este", "esa", "ese", "cómo",
-        "dónde", "quién", "gracias", "señor", "nada", "algo", "otro", "tiempo", "año", "día",
-    },
-    "fr": {
-        "que", "de", "je", "est", "pas", "le", "vous", "la", "tu", "il", "et", "les", "des", "en",
-        "un", "une", "ce", "qui", "nous", "sur", "pour", "dans", "avec", "mais", "tout", "plus",
-        "bien", "être", "avoir", "faire", "comme", "aussi", "très", "quand", "parce", "alors",
-        "donc", "chose", "temps", "jour", "année", "merci", "oui", "non", "peut", "cette", "ces",
-        "leur", "sans", "sous", "entre", "après", "avant", "encore", "toujours", "jamais",
-    },
-    "de": {
-        "der", "die", "und", "ich", "das", "nicht", "sie", "ist", "es", "den", "zu", "wir", "mit",
-        "ein", "eine", "auf", "für", "aber", "auch", "als", "war", "hat", "dass", "sich", "von",
-        "dem", "noch", "wie", "über", "nur", "muss", "kann", "sehr", "schon", "immer", "jetzt",
-        "hier", "dann", "weil", "wenn", "oder", "mehr", "einen", "seine", "ihre", "unser",
-        "danke", "bitte", "heute", "morgen", "jahr", "zeit", "arbeit", "machen", "haben",
-    },
-    "it": {
-        "che", "di", "non", "il", "la", "un", "per", "sono", "una", "mi", "con", "ma", "come",
-        "questo", "bene", "più", "anche", "molto", "quando", "perché", "cosa", "tutto", "solo",
-        "adesso", "grazie", "sì", "noi", "loro", "essere", "fare", "avere", "dove", "chi",
-        "tempo", "anno", "giorno", "lavoro", "sempre", "mai", "ancora", "dopo", "prima",
-    },
-    "pt": {
-        "que", "não", "de", "para", "com", "uma", "você", "por", "mais", "isso", "está", "muito",
-        "como", "mas", "quando", "porque", "então", "aqui", "agora", "obrigado", "sim", "nós",
-        "eles", "fazer", "ter", "ser", "tempo", "ano", "dia", "trabalho", "sempre", "nunca",
-        "ainda", "depois", "antes", "tudo", "nada", "algo", "outro", "esse", "essa",
-    },
-    "nl": {
-        "de", "het", "een", "ik", "je", "niet", "dat", "en", "van", "is", "we", "op", "voor",
-        "met", "maar", "ook", "als", "zijn", "hebben", "worden", "kunnen", "moeten", "heel",
-        "altijd", "nooit", "vandaag", "morgen", "jaar", "tijd", "werk", "dank", "graag",
-        "omdat", "wanneer", "waar", "wie", "hoe", "nog", "alleen", "samen",
-    },
+    "en": ENGLISH_MARKERS,
+    **{code: set(words) for code, words in multilingual.MARKERS.items()},
+    **DETECT_ONLY,
 }
 
-DIACRITIC_HINTS: Dict[str, str] = {
-    "es": "ñáéíóúü¿¡",
-    "fr": "àâçéèêëîïôûùüÿœ",
-    "de": "äöüß",
-    "pt": "ãõáâçéêíóôú",
-    "it": "àèéìòù",
-    "nl": "ëïĳ",
-}
+DIACRITIC_HINTS: Dict[str, str] = {**multilingual.DIACRITICS, "pl": "ąćęłńóśźż", "sv": "åäö"}
 
-ANALYTICS_LANGUAGES = frozenset({"en", "es", "fr", "de", "it", "pt"})
+ANALYTICS_LANGUAGES = frozenset({"en"}) | multilingual.SUPPORTED
 MIN_TOKENS_FOR_CONFIDENCE = 4
 
 
