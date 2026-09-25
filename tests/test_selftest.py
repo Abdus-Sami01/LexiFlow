@@ -113,8 +113,24 @@ def test_as_dict_is_json_serialisable(settings):
 def test_faster_whisper_refuses_to_download_by_default():
     backend = FasterWhisperBackend(ASRConfig(backend="faster_whisper", model_name="base.en"))
     with pytest.raises(BackendUnavailable) as raised:
-        backend.load()
+        backend.reject_download()
     assert "allow_downloads" in str(raised.value)
+
+
+def test_the_download_guard_allows_a_local_model(tmp_path):
+    weights = tmp_path / "ggml-base.en.bin"
+    weights.write_bytes(b"\x00")
+    backend = FasterWhisperBackend(
+        ASRConfig(backend="faster_whisper", model_path=str(weights))
+    )
+    backend.reject_download()
+
+
+def test_the_download_guard_can_be_opted_out_of():
+    backend = FasterWhisperBackend(
+        ASRConfig(backend="faster_whisper", model_name="base.en", allow_downloads=True)
+    )
+    backend.reject_download()
 
 
 def test_faster_whisper_wants_ctranslate2_weights():

@@ -17,7 +17,7 @@ import numpy as np
 
 from . import export
 from .asr import hardware
-from .asr.backends import available_backends, create_backend
+from .asr.backends import available_backends, format_for
 from .asr.models import model_format, resolve
 from .audio.speaker import find_change_point
 from .config import LexiFlowConfig
@@ -117,14 +117,6 @@ def two_speaker_audio(sample_rate: int = 16_000) -> np.ndarray:
     )
 
 
-def _preferred_format(settings: LexiFlowConfig) -> str:
-    """Which weights the backend that will actually be chosen needs."""
-    try:
-        return create_backend(settings.asr).model_format
-    except Exception:
-        return "ggml"
-
-
 def run(
     config: Optional[LexiFlowConfig] = None,
     model: Optional[str] = None,
@@ -167,7 +159,7 @@ def run(
     resolved = resolve(requested)
     if resolved:
         settings.asr.model_path = resolved
-        wanted = _preferred_format(settings)
+        wanted = format_for(settings.asr)
         found = model_format(resolved)
         if wanted != found:
             report(

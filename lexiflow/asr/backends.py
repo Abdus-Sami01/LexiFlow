@@ -216,11 +216,8 @@ class FasterWhisperBackend(WhisperBackend):
     def is_available(cls) -> bool:
         return _try_import("faster_whisper") is not None
 
-    def load(self) -> "FasterWhisperBackend":
-        module = _try_import("faster_whisper")
-        if module is None:
-            raise BackendUnavailable("faster-whisper is not installed")
-
+    def reject_download(self) -> None:
+        """A bare model name means a network fetch, which the offline promise forbids."""
         target = self.config.model_path or self.config.model_name
         if not Path(target).exists() and not self.config.allow_downloads:
             raise BackendUnavailable(
@@ -228,6 +225,12 @@ class FasterWhisperBackend(WhisperBackend):
                 "Point asr.model_path at a local CTranslate2 directory, or set "
                 "asr.allow_downloads = true to permit the one-off fetch."
             )
+
+    def load(self) -> "FasterWhisperBackend":
+        module = _try_import("faster_whisper")
+        if module is None:
+            raise BackendUnavailable("faster-whisper is not installed")
+        self.reject_download()
 
         self._model = module.WhisperModel(
             self.config.model_path or self.config.model_name,
@@ -382,6 +385,19 @@ def available_backends() -> List[str]:
         for name, klass in sorted(_REGISTRY.items(), key=lambda item: item[1].priority)
         if klass.is_available()
     ]
+
+
+def format_for(config: Optional[ASRConfig] = None) -> str:
+    """Which weights the configured backend reads, answerable before it is installed."""
+    config = config or ASRConfig()
+    if config.backend and config.backend != "auto":
+        klass = _REGISTRY.get(config.backend)
+        if klass is not None:
+            return klass.model_format
+    for _, klass in sorted(_REGISTRY.items(), key=lambda item: item[1].priority):
+        if klass.is_available() and klass.name != "null":
+            return klass.model_format
+    return WhisperBackend.model_format
 
 
 def create_backend(config: Optional[ASRConfig] = None) -> WhisperBackend:
