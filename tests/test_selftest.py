@@ -134,3 +134,66 @@ def test_selftest_command_can_emit_json(settings, tmp_path, capsys):
     assert main(["--config", str(config_path), "selftest", "--backend", "null", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out.split("\n", 2)[2])
     assert payload["ok"] is True
+
+
+def ct2_directory(tmp_path):
+    target = tmp_path / "ct2-model"
+    target.mkdir()
+    (target / "model.bin").write_bytes(b"\x00" * 16)
+    (target / "config.json").write_text("{}")
+    return target
+
+
+def test_a_ctranslate2_directory_resolves_like_a_model(tmp_path):
+    from lexiflow.asr import models
+
+    target = ct2_directory(tmp_path)
+    assert models.resolve(str(target)) == str(target)
+    assert models.is_ctranslate2_model(target) is True
+    assert models.model_format(str(target)) == "ctranslate2"
+
+
+def test_a_plain_directory_is_not_a_model(tmp_path):
+    from lexiflow.asr import models
+
+    empty = tmp_path / "not-a-model"
+    empty.mkdir()
+    assert models.resolve(str(empty)) is None
+    assert models.is_ctranslate2_model(empty) is False
+
+
+def test_a_ggml_file_still_resolves_and_reports_its_format(tmp_path):
+    from lexiflow.asr import models
+
+    weights = tmp_path / "ggml-base.en.bin"
+    weights.write_bytes(b"\x00" * 16)
+    assert models.resolve(str(weights)) == str(weights)
+    assert models.model_format(str(weights)) == "ggml"
+
+
+def test_selftest_warns_when_the_weights_do_not_match_the_backend(settings, tmp_path):
+    settings.asr.backend = "faster_whisper"
+    weights = tmp_path / "ggml-base.en.bin"
+    weights.write_bytes(b"\x00" * 16)
+
+    by_name = {check.name: check for check in selftest.run(settings, model=str(weights)).checks}
+    assert by_name["model"].status == selftest.WARN
+    assert "ggml" in by_name["model"].detail
+
+
+def test_the_reference_audio_holds_two_separable_voices():
+    from lexiflow.audio.segmenter import SpeechSegmenter
+    from lexiflow.audio.speaker import SpeakerTracker
+    from lexiflow.config import SegmenterConfig
+
+    audio = selftest.two_speaker_audio()
+    segmenter = SpeechSegmenter(SegmenterConfig(), 16_000)
+    segments = [item for item in segmenter.push(audio) if item.is_final]
+    tail = segmenter.flush()
+    if tail is not None:
+        segments.append(tail)
+
+    assert len(segments) == 2
+    tracker = SpeakerTracker()
+    labels = [tracker.assign(item.audio, 16_000).label for item in segments]
+    assert labels[0] != labels[1]

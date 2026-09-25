@@ -257,3 +257,60 @@ def test_a_non_positive_word_window_is_a_config_error():
     config = LexiFlowConfig()
     config.diarization.word_window_seconds = 0.0
     assert any("word_window_seconds" in problem for problem in config.validate())
+
+
+def formant_voice(fundamental, formants, seconds=2.0, rate=RATE, seed=3):
+    rng = np.random.default_rng(seed)
+    times = np.arange(int(rate * seconds)) / rate
+    total = np.zeros(times.size)
+    for harmonic in range(1, 120):
+        frequency = fundamental * harmonic
+        if frequency >= rate / 2:
+            break
+        gain = sum(1.0 / (1.0 + ((frequency - centre) / 120.0) ** 2) for centre in formants)
+        total += gain * np.sin(2 * np.pi * frequency * times)
+    total /= np.max(np.abs(total)) or 1.0
+    return (total * 0.2 + rng.normal(0, 0.01, times.size)).astype(np.float32)
+
+
+def padded(audio, lead=0.5, tail=0.6, rate=RATE):
+    quiet = np.zeros(int(rate * lead), dtype=np.float32)
+    return np.concatenate([quiet, audio, np.zeros(int(rate * tail), dtype=np.float32)])
+
+
+def test_silence_padding_no_longer_pulls_two_voices_together():
+    first = formant_voice(115.0, (300.0, 870.0, 2250.0))
+    second = formant_voice(235.0, (730.0, 1900.0, 3200.0))
+
+    clean = float(np.dot(voice_embedding(first, RATE), voice_embedding(second, RATE)))
+    padded_pair = float(
+        np.dot(voice_embedding(padded(first), RATE), voice_embedding(padded(second), RATE))
+    )
+    assert clean < 0.72
+    assert padded_pair - clean < 0.15
+
+
+def test_padded_segments_still_separate_into_two_speakers():
+    tracker = SpeakerTracker(min_seconds=0.2)
+    labels = [
+        tracker.assign(padded(formant_voice(115.0, (300.0, 870.0, 2250.0))), RATE).label,
+        tracker.assign(padded(formant_voice(235.0, (730.0, 1900.0, 3200.0))), RATE).label,
+    ]
+    assert labels[0] != labels[1]
+    assert tracker.speaker_count == 2
+
+
+def test_voiced_frame_selection_drops_the_quiet_frames():
+    from lexiflow.audio.speaker import mfcc, voiced_frames
+
+    cepstra = mfcc(padded(formant_voice(150.0, (500.0, 1500.0, 2500.0))), RATE)
+    kept = voiced_frames(cepstra)
+    assert 0 < kept.shape[0] < cepstra.shape[0]
+
+
+def test_voiced_frame_selection_keeps_everything_when_energy_is_flat():
+    from lexiflow.audio.speaker import mfcc, voiced_frames
+
+    steady = mfcc(formant_voice(150.0, (500.0, 1500.0, 2500.0)), RATE)
+    assert voiced_frames(steady, floor=0.0).shape == steady.shape
+    assert voiced_frames(np.zeros((2, 13))).shape == (2, 13)

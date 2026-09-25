@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
@@ -19,7 +18,7 @@ import numpy as np
 from . import export
 from .asr import hardware
 from .asr.backends import available_backends, create_backend
-from .asr.models import resolve
+from .asr.models import model_format, resolve
 from .audio.speaker import find_change_point
 from .config import LexiFlowConfig
 from .observability import FAILURES
@@ -90,20 +89,32 @@ class SelfTest:
 
 
 def two_speaker_audio(sample_rate: int = 16_000) -> np.ndarray:
-    """Two clearly different synthetic voices with a pause, then trailing silence."""
+    """Two synthetic voices with different formants, a pause between, then trailing silence."""
     generator = np.random.default_rng(11)
 
-    def voice(fundamental: float, seconds: float) -> np.ndarray:
+    def voice(fundamental: float, formants: tuple, seconds: float) -> np.ndarray:
         times = np.arange(int(sample_rate * seconds)) / sample_rate
-        harmonics = sum(
-            np.sin(2 * np.pi * fundamental * k * times) / k for k in range(1, 12)
-        )
+        total = np.zeros(times.size)
+        for harmonic in range(1, 120):
+            frequency = fundamental * harmonic
+            if frequency >= sample_rate / 2:
+                break
+            gain = sum(1.0 / (1.0 + ((frequency - centre) / 120.0) ** 2) for centre in formants)
+            total += gain * np.sin(2 * np.pi * frequency * times)
         envelope = 1.0 + 0.25 * np.sin(2 * np.pi * 3.0 * times)
         noise = generator.normal(0, 0.01, times.size)
-        return (harmonics * envelope * 0.2 + noise).astype(np.float32)
+        peak = np.max(np.abs(total)) or 1.0
+        return (total / peak * envelope * 0.2 + noise).astype(np.float32)
 
     silence = np.zeros(int(sample_rate * 0.8), dtype=np.float32)
-    return np.concatenate([voice(115.0, 2.0), silence, voice(235.0, 2.0), silence])
+    return np.concatenate(
+        [
+            voice(115.0, (300.0, 870.0, 2250.0), 2.0),
+            silence,
+            voice(235.0, (730.0, 1900.0, 3200.0), 2.0),
+            silence,
+        ]
+    )
 
 
 def _preferred_format(settings: LexiFlowConfig) -> str:
@@ -157,18 +168,18 @@ def run(
     if resolved:
         settings.asr.model_path = resolved
         wanted = _preferred_format(settings)
-        suffix = Path(resolved).suffix.lower()
-        if wanted == "ctranslate2" and suffix == ".bin":
+        found = model_format(resolved)
+        if wanted != found:
             report(
                 result.add(
                     "model",
                     WARN,
-                    f"{resolved} is a ggml file, which faster-whisper cannot read; "
-                    "install pywhispercpp or point at a CTranslate2 directory",
+                    f"{resolved} holds {found} weights but the chosen backend reads {wanted}; "
+                    "point asr.model_path at the format that backend needs",
                 )
             )
         else:
-            report(result.add("model", PASS, resolved))
+            report(result.add("model", PASS, f"{resolved} ({found})"))
     else:
         report(
             result.add(
@@ -230,15 +241,20 @@ def run(
 
     elapsed = time.perf_counter() - started
     health = pipeline.health()
-    report(
-        result.add(
-            "pipeline",
-            PASS if drained and not health.errors else FAIL,
-            f"{health.segments_in} segment(s) through three threads"
-            + ("" if drained else ", did not drain in time"),
-            elapsed,
+    slow = health.asr_realtime_factor > 1.0
+    if drained and not health.errors:
+        status, detail = PASS, f"{health.segments_in} segment(s) through three threads"
+    elif health.errors:
+        status, detail = FAIL, "; ".join(health.errors)
+    elif slow:
+        status = WARN
+        detail = (
+            f"{health.segments_in} segment(s) queued but inference is running at "
+            f"{health.asr_realtime_factor:.1f}x realtime, so the drain budget ran out first"
         )
-    )
+    else:
+        status, detail = FAIL, "the queues did not drain and inference was not the reason"
+    report(result.add("pipeline", status, detail, elapsed))
 
     transcript = pipeline.store.transcript()
     if backend_name == "null":

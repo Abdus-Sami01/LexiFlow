@@ -83,12 +83,22 @@ def installed_models() -> List[Dict[str, object]]:
     return rows
 
 
+def is_ctranslate2_model(path: Path) -> bool:
+    """A CTranslate2 model is a directory, not a file, so a plain is_file check misses it."""
+    return path.is_dir() and (path / "model.bin").is_file()
+
+
+def model_format(path: str) -> str:
+    """Which runtime family the weights on disk belong to."""
+    return "ctranslate2" if is_ctranslate2_model(Path(path)) else "ggml"
+
+
 def resolve(name_or_path: Optional[str]) -> Optional[str]:
-    """Accept a catalogue name, a bare filename or an explicit path."""
+    """Accept a catalogue name, a bare filename, a ggml path or a CTranslate2 directory."""
     if not name_or_path:
         return None
     candidate = Path(name_or_path)
-    if candidate.is_file():
+    if candidate.is_file() or is_ctranslate2_model(candidate):
         return str(candidate)
     if is_installed(name_or_path):
         return str(local_path(name_or_path))

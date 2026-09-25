@@ -90,9 +90,21 @@ def mfcc(audio: np.ndarray, sample_rate: int = 16_000) -> np.ndarray:
     return cepstra
 
 
+def voiced_frames(cepstra: np.ndarray, floor: float = 0.45, minimum: int = 3) -> np.ndarray:
+    """Keep the louder frames: pre-roll and hangover silence pull every voice to room tone."""
+    if cepstra.shape[0] < minimum:
+        return cepstra
+    energy = cepstra[:, 0]
+    quietest, loudest = float(energy.min()), float(energy.max())
+    if loudest - quietest <= 1e-9:
+        return cepstra
+    kept = cepstra[energy >= quietest + floor * (loudest - quietest)]
+    return kept if kept.shape[0] >= minimum else cepstra
+
+
 def voice_embedding(audio: np.ndarray, sample_rate: int = 16_000) -> Optional[np.ndarray]:
-    """Mean and standard deviation of the cepstra, mean-normalised then unit length."""
-    cepstra = mfcc(audio, sample_rate)
+    """Mean and standard deviation of the voiced cepstra, mean-normalised then unit length."""
+    cepstra = voiced_frames(mfcc(audio, sample_rate))
     if cepstra.shape[0] < 3:
         return None
     normalised = cepstra - cepstra.mean(axis=0, keepdims=True)
