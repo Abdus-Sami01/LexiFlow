@@ -491,7 +491,7 @@ def command_export(args: argparse.Namespace) -> int:
     digest = analytics.digest([row.text for row in rows])
 
     formats = args.format or ["md"]
-    granularity = "word" if args.words else "segment"
+    granularity = "word" if args.words else ("caption" if args.captions else "segment")
     if args.output:
         written = export.write_many(
             formats,
@@ -501,6 +501,7 @@ def command_export(args: argparse.Namespace) -> int:
             digest,
             granularity=granularity,
             translated=args.translated,
+            caption_width=args.caption_width,
         )
         for path in written:
             print(f"wrote {path}")
@@ -513,6 +514,7 @@ def command_export(args: argparse.Namespace) -> int:
                 digest,
                 granularity=granularity,
                 translated=args.translated,
+                caption_width=args.caption_width,
             )
         )
     store.close()
@@ -1025,6 +1027,13 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--output", help="path stem; prints to stdout when omitted")
     export_parser.add_argument(
         "--words", action="store_true", help="one subtitle cue per word where the backend gave us"
+    )
+    export_parser.add_argument(
+        "--captions", action="store_true", help="pack word timings into readable subtitle lines"
+    )
+    export_parser.add_argument(
+        "--caption-width", type=int, default=export.CAPTION_WIDTH,
+        help="characters per subtitle line with --captions"
     )
     export_parser.add_argument(
         "--translated", action="store_true", help="use the translation as the subtitle text"

@@ -209,3 +209,93 @@ def test_spans_can_be_disabled():
         ],
     )
     assert len(export.to_cues([row], use_spans=False)) == 1
+
+
+def worded_row(text, speaker="Speaker A", start=0.0, step=0.3, gap=0.02):
+    words = []
+    at = start
+    for token in text.split():
+        words.append({"start": at, "end": at + step - gap, "text": token})
+        at += step
+    spans = [{"start": start, "end": at, "text": text, "words": words}]
+    return SpannedRow(text, start, at, spans, speaker)
+
+
+LONG = "remind me to send the pricing sheet to Sarah Chen before Friday and also call the bank"
+
+
+def test_captions_pack_words_into_readable_lines():
+    cues = export.to_cues([worded_row(LONG)], granularity="caption")
+    assert 1 < len(cues) < len(LONG.split())
+    assert all(len(cue.text) <= export.CAPTION_WIDTH for cue in cues)
+    assert " ".join(cue.text for cue in cues) == LONG
+
+
+def test_caption_width_is_configurable():
+    narrow = export.to_cues([worded_row(LONG)], granularity="caption", caption_width=20)
+    wide = export.to_cues([worded_row(LONG)], granularity="caption", caption_width=80)
+    assert len(narrow) > len(wide)
+    assert all(len(cue.text) <= 20 for cue in narrow)
+
+
+def test_word_granularity_is_untouched():
+    cues = export.to_cues([worded_row(LONG)], granularity="word")
+    assert len(cues) == len(LONG.split())
+
+
+def test_captions_break_when_the_speaker_changes():
+    words = [
+        {"start": 0.0, "end": 0.4, "text": "hello", "speaker": "Speaker A"},
+        {"start": 0.4, "end": 0.8, "text": "there", "speaker": "Speaker A"},
+        {"start": 0.8, "end": 1.2, "text": "hi", "speaker": "Speaker B"},
+    ]
+    grouped = export.group_into_captions(words)
+    assert [item["speaker"] for item in grouped] == ["Speaker A", "Speaker B"]
+    assert grouped[0]["text"] == "hello there"
+
+
+def test_captions_break_on_a_long_pause():
+    words = [
+        {"start": 0.0, "end": 0.4, "text": "one"},
+        {"start": 5.0, "end": 5.4, "text": "two"},
+    ]
+    assert len(export.group_into_captions(words)) == 2
+
+
+def test_captions_break_after_a_sentence_ends():
+    words = [
+        {"start": 0.0, "end": 0.4, "text": "done."},
+        {"start": 0.45, "end": 0.8, "text": "next"},
+    ]
+    grouped = export.group_into_captions(words)
+    assert [item["text"] for item in grouped] == ["done.", "next"]
+
+
+def test_captions_cap_how_long_one_line_stays_up():
+    words = [
+        {"start": float(i), "end": float(i) + 0.4, "text": "a"} for i in range(12)
+    ]
+    grouped = export.group_into_captions(words, max_gap=2.0)
+    assert all(item["end"] - item["start"] <= export.CAPTION_MAX_SECONDS for item in grouped)
+
+
+def test_captions_ignore_blank_words():
+    assert export.group_into_captions([{"start": 0.0, "end": 1.0, "text": "  "}]) == []
+
+
+def test_captions_fall_back_to_segments_without_word_timings():
+    plain = SpannedRow("no words here", 0.0, 2.0, [])
+    assert len(export.to_cues([plain], granularity="caption")) == 1
+
+
+def test_srt_renders_grouped_captions():
+    body = export.render("srt", [worded_row(LONG)], granularity="caption")
+    assert "-->" in body
+    assert "Sarah" in body
+    assert body.count("-->") == len(export.to_cues([worded_row(LONG)], granularity="caption"))
+
+
+def test_grouped_caption_lines_stay_within_the_width():
+    body = export.to_srt([worded_row(LONG)], granularity="caption")
+    lines = [line for line in body.splitlines() if line and "-->" not in line]
+    assert all(len(line) <= export.CAPTION_WIDTH + len("[Speaker A] ") for line in lines[1::2])

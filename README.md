@@ -143,7 +143,9 @@ segment's own label, and a transcript line whose words genuinely disagree is spl
 per speaker in the markdown export and one cue per speaker with `--words`.
 
 Exports cover `srt`, `vtt`, `txt`, `md` and `json`. `--words` emits one cue per word wherever the
-backend gave word timings, otherwise it falls back to segment timings. Subtitle cues are made monotonic and
+backend gave word timings, which suits karaoke-style captions; `--captions` packs those same word
+timings into readable subtitle lines instead, breaking on speaker changes, sentence ends, pauses
+over 0.8s, and a `--caption-width` character limit. Both fall back to segment timings. Subtitle cues are made monotonic and
 non-overlapping, and short utterances get a minimum on-screen duration, so the files load cleanly
 in players that reject overlapping cues. The markdown export is a meeting-note document: summary,
 keyphrases, action-item checkboxes, speaker table, entities and the full transcript. The same five

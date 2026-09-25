@@ -10,6 +10,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 from .audio.speaker import word_turns
 
 SUBTITLE_MIN_SECONDS = 0.4
+CAPTION_WIDTH = 42
+CAPTION_MAX_SECONDS = 6.0
+CAPTION_MAX_GAP = 0.8
 
 
 @dataclass
@@ -46,6 +49,16 @@ def _row_text(row: Any, translated: bool) -> str:
     return row.text
 
 
+def _row_words(row: Any) -> List[Dict[str, Any]]:
+    """Every word the backend timed for this row, in order."""
+    return [
+        word
+        for span in (getattr(row, "spans", None) or [])
+        for word in (span.get("words") or [])
+        if (word.get("text") or "").strip() and word.get("end", 0) > word.get("start", 0)
+    ]
+
+
 def _row_spans(row: Any, granularity: str = "segment") -> List[Dict[str, Any]]:
     """Prefer the backend's own timings, falling back to the segment boundary."""
     spans = [
@@ -54,13 +67,8 @@ def _row_spans(row: Any, granularity: str = "segment") -> List[Dict[str, Any]]:
         if (span.get("text") or "").strip() and span.get("end", 0) > span.get("start", 0)
     ]
 
-    if granularity == "word":
-        words = [
-            word
-            for span in spans
-            for word in (span.get("words") or [])
-            if (word.get("text") or "").strip() and word.get("end", 0) > word.get("start", 0)
-        ]
+    if granularity in {"word", "caption"}:
+        words = _row_words(row)
         if words:
             return words
 
@@ -69,12 +77,46 @@ def _row_spans(row: Any, granularity: str = "segment") -> List[Dict[str, Any]]:
     return [{"start": row.started_at, "end": row.ended_at, "text": row.text}]
 
 
+def group_into_captions(
+    words: List[Dict[str, Any]],
+    width: int = CAPTION_WIDTH,
+    max_seconds: float = CAPTION_MAX_SECONDS,
+    max_gap: float = CAPTION_MAX_GAP,
+) -> List[Dict[str, Any]]:
+    """One cue per word is unreadable, so pack words into lines a viewer can follow."""
+    captions: List[Dict[str, Any]] = []
+    for word in words:
+        text = str(word.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(word.get("start") or 0.0)
+        end = float(word.get("end") or start)
+        current = captions[-1] if captions else None
+        fits = (
+            current is not None
+            and current["speaker"] == word.get("speaker")
+            and len(current["text"]) + 1 + len(text) <= width
+            and end - current["start"] <= max_seconds
+            and start - current["end"] <= max_gap
+            and not current["text"].endswith((".", "?", "!"))
+        )
+        if fits:
+            current["text"] = f"{current['text']} {text}"
+            current["end"] = end
+            continue
+        captions.append(
+            {"start": start, "end": end, "text": text, "speaker": word.get("speaker")}
+        )
+    return captions
+
+
 def to_cues(
     items: Sequence[Any],
     origin: Optional[float] = None,
     use_spans: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> List[Cue]:
     """Normalise transcript rows into monotonic, non-overlapping subtitle cues."""
     rows = [item for item in items if getattr(item, "text", "").strip()]
@@ -89,6 +131,11 @@ def to_cues(
             pieces = [
                 {"start": row.started_at, "end": row.ended_at, "text": _row_text(row, True)}
             ]
+        elif granularity == "caption" and use_spans and _row_words(row):
+            pieces = group_into_captions(
+                [{**word, "speaker": word.get("speaker") or speaker} for word in _row_words(row)],
+                caption_width,
+            )
         elif use_spans:
             pieces = _row_spans(row, granularity)
         else:
@@ -126,9 +173,12 @@ def to_srt(
     speakers: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> str:
     blocks = []
-    for cue in to_cues(items, origin, granularity=granularity, translated=translated):
+    for cue in to_cues(
+        items, origin, granularity=granularity, translated=translated, caption_width=caption_width
+    ):
         blocks.append(
             f"{cue.index}\n"
             f"{_clock(cue.start, ',')} --> {_clock(cue.end, ',')}\n"
@@ -143,9 +193,12 @@ def to_vtt(
     speakers: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> str:
     blocks = ["WEBVTT\n"]
-    for cue in to_cues(items, origin, granularity=granularity, translated=translated):
+    for cue in to_cues(
+        items, origin, granularity=granularity, translated=translated, caption_width=caption_width
+    ):
         blocks.append(
             f"{_clock(cue.start, '.')} --> {_clock(cue.end, '.')}\n"
             f"{cue.labelled(speakers)}\n"
@@ -266,14 +319,17 @@ def render(
     speakers: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> str:
     """Single entry point used by the CLI and the dashboard download buttons."""
     renderers: Dict[str, Callable[[], str]] = {
         "srt": lambda: to_srt(
-            items, speakers=speakers, granularity=granularity, translated=translated
+            items, speakers=speakers, granularity=granularity, translated=translated,
+            caption_width=caption_width,
         ),
         "vtt": lambda: to_vtt(
-            items, speakers=speakers, granularity=granularity, translated=translated
+            items, speakers=speakers, granularity=granularity, translated=translated,
+            caption_width=caption_width,
         ),
         "txt": lambda: to_text(items, speakers=speakers),
         "md": lambda: to_markdown(payload or {}, digest),
@@ -293,13 +349,15 @@ def write(
     speakers: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> Path:
     target = Path(destination)
     if target.suffix == "":
         target = target.with_suffix(FORMATS[fmt])
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        render(fmt, items, payload, digest, speakers, granularity, translated), encoding="utf-8"
+        render(fmt, items, payload, digest, speakers, granularity, translated, caption_width),
+        encoding="utf-8",
     )
     return target
 
@@ -313,6 +371,7 @@ def write_many(
     speakers: bool = True,
     granularity: str = "segment",
     translated: bool = False,
+    caption_width: int = CAPTION_WIDTH,
 ) -> List[Path]:
     base = Path(stem)
     return [
@@ -325,6 +384,7 @@ def write_many(
             speakers,
             granularity,
             translated,
+            caption_width,
         )
         for fmt in formats
     ]
