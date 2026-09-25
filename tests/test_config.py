@@ -1,12 +1,17 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
-import tomllib
 
 import lexiflow
 from lexiflow.cli import main
 from lexiflow.config import LexiFlowConfig
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    tomllib = pytest.importorskip("tomli")
 
 
 def test_defaults_are_valid():

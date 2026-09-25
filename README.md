@@ -22,6 +22,33 @@ microphone ──► ring buffer ──► segmenter ──► whisper.cpp ─�
                                 └── partial hypotheses every 2s, dropped under backpressure
 ```
 
+## What you get
+
+`lexiflow batch ./recordings` turns a folder of audio into one of these per file, offline:
+
+```markdown
+# Standup
+
+## Action items
+- [ ] send the revised pricing sheet to Sarah Chen at Northwind Systems
+- [ ] **deadline** Friday _(due Friday)_
+- [ ] **decision** ship the ingestion rewrite first because the disk I O was terrible
+- [ ] **blocker** the audio driver, it crashes every time the buffer overruns
+- [ ] follow up with legal before end of week _(due end of week)_
+
+## Entities
+- **organization**: Northwind Systems (1)
+- **person**: Sarah Chen (1)
+
+## Transcript
+- Morning everyone, thanks for jumping on so quickly.
+- Remind me to send the revised pricing sheet to Sarah Chen at Northwind Systems.
+...
+```
+
+Plus a summary, keyphrases, speaker labels and a sentiment timeline. Try it with no audio and no
+model at all: `pip install lexiflow && python -m lexiflow demo`.
+
 ## What it does
 
 - Captures raw microphone bytes straight into a pre-allocated RAM ring buffer, converts them to the
