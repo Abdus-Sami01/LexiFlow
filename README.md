@@ -318,6 +318,17 @@ round-tripping, cross-session aggregation over a seeded three-meeting history, B
 ranking and its FTS-less fallback, batch processing over a folder including resume and a corrupt
 file, and full audio-to-insight passes through all three threads.
 
+Whisper weights are the one part of the stack that cannot be reconstructed offline, so the suite
+builds its own: `tests/tiny_whisper.py` writes a structurally real CTranslate2 Whisper model with
+random weights — real tensors, real vocabulary, real tokenizer, no download. `tests/test_real_backend.py`
+then drives real faster-whisper and the full three-thread pipeline against it. The text it produces
+is meaningless, but the loading, the span and word-timing shapes, the realtime-factor measurement
+and the diarization are all real. It is slow, so it is opt-in:
+
+```bash
+LEXIFLOW_REAL_BACKEND=1 pytest tests/test_real_backend.py
+```
+
 ## When something goes wrong
 
 Every stage is built to survive a fault: a failed SQLite write must not kill the microphone
